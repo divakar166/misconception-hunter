@@ -9,6 +9,7 @@ import {
   type AgentVisualizerState,
   type IMessageListItem,
 } from 'agora-agent-uikit';
+import type { SessionSummaryTurn } from '@/types/conversation';
 
 // Fixes compacted punctuation emitted by some TTS/ASR providers where sentence-ending
 // characters run directly into the next word (e.g. "Hello.World" → "Hello. World").
@@ -123,4 +124,19 @@ export function getCurrentInProgressMessage(
 ) {
   const item = transcript.find((entry) => entry.status === TurnStatus.IN_PROGRESS);
   return item ? toMessageListItem(item) : null;
+}
+
+// Maps the display message list to the {role, text} shape /api/session-summary
+// expects. Empty-text turns (e.g. a cut-off interrupted bubble) are dropped —
+// they add no signal for the summary and can confuse the model's turn-reading.
+export function toSessionSummaryTranscript(
+  messageList: IMessageListItem[],
+  agentUID: string,
+): SessionSummaryTurn[] {
+  return messageList
+    .filter((message) => message.text?.trim())
+    .map((message) => ({
+      role: String(message.uid) === agentUID ? 'assistant' : 'user',
+      text: message.text!.trim(),
+    }));
 }

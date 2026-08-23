@@ -30,6 +30,7 @@ import {
   mapAgentVisualizerState,
   normalizeTimestampMs,
   normalizeTranscript,
+  toSessionSummaryTranscript,
 } from '@/lib/conversation';
 import { MicrophoneSelector } from './MicrophoneSelector';
 import {
@@ -465,8 +466,8 @@ export default function ConversationComponent({
   useClientEvent(client, 'token-privilege-will-expire', handleTokenWillExpire);
 
   const handleEndConversation = useCallback(async () => {
-    onEndConversation();
-  }, [onEndConversation]);
+    onEndConversation(toSessionSummaryTranscript(messageList, agentUID));
+  }, [onEndConversation, messageList, agentUID]);
 
   return (
     <QuickstartConversationLayout

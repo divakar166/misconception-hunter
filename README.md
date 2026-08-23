@@ -1,199 +1,168 @@
-# Agora Conversational AI Next.js Quickstart
+# Misconception Hunter
 
-[![Build](https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs/actions/workflows/build-check.yml/badge.svg)](https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs/actions/workflows/build-check.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org/)
+A voice-native AI tutor that hunts for *misconceptions*, not just wrong answers. Built on the Agora Conversational AI Engine for **Build with Agora Buildathon — Problem Statement 2: AI for Collaborative Education**.
 
-Build a production-style voice agent in minutes with Next.js and the Agora Conversational AI Engine, including voice agent visualizer ([Agent UIKit](https://agoraio-conversational-ai.github.io/agent-uikit/)), live transcript, and real-time pipeline latency via `AGENT_METRICS` ([Agent Toolkit](https://github.com/AgoraIO-Conversational-AI/agent-client-toolkit-ts)).
+## The Problem
 
-## Prerequisites
+Most AI tutors are answer machines: ask a question, get told if you're right, move on. That teaches students to fish for the correct output, not to fix broken reasoning. A student can get the right answer for the wrong reason and never find out — or get the wrong answer while understanding the concept perfectly, and get "corrected" for a simple slip.
 
-- [Node.js 22+](https://nodejs.org/en/download/)
-- [pnpm](https://pnpm.io/installation)
-- [Agora CLI](https://github.com/AgoraIO-Community/cli)
+**Misconception Hunter never grades the first answer.** It asks *how* the student got there, keeps asking until it has real evidence, and only names a misconception once a pattern shows up across multiple turns — never from one wrong answer.
 
-## Run It
+## Target User
 
-Getting started is quick and easy: install the CLI _(skip if you already have it)_ , scaffold the Next.js quickstart using the Agora CLI, install dependencies, and run.
+A student practicing foundational computer science and AI reasoning out loud (programming fundamentals, algorithms & complexity, data structures, machine learning) — the kind of person who'd otherwise be limited to a textbook or a one-shot answer bot. Secondarily, a teacher who receives the end-of-session report for the small number of sessions the AI flags as needing a human look, instead of having to review every transcript.
 
-1. **Install the Agora CLI and sign in**
-   _(skip if `agora` is already on your PATH)_:
+## How It Works (Example)
 
-   macOS and Linux:
-
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/AgoraIO/cli/main/install.sh | sh -s -- --add-to-path
-   ```
-
-   Windows PowerShell:
-
-   ```powershell
-   irm https://dl.agora.io/cli/install.ps1 | iex
-   ```
-
-   If the Windows install command fails in PowerShell, try running the macOS/Linux command from [Git Bash](https://git-scm.com/downloads/win), then open a new terminal and run `agora --help` to confirm the CLI is on your PATH.
-
-   Then verify and sign in:
-
-   ```bash
-   agora --help
-   agora login
-   ```
-
-   If `agora --help` is not found after install, close and reopen your terminal, then try again. If it still fails, check that the installer-added Agora CLI location is on your shell `PATH`.
-
-2. **Scaffold and run**
-   `agora init` clones the starter, binds an Agora project, and writes `.env.local`. (replace `my-nextjs-demo` with your own project name):
-
-   ```bash
-   agora init my-nextjs-demo --template nextjs
-   cd my-nextjs-demo
-   pnpm install
-   pnpm dev
-   ```
-
-3. Open [http://localhost:3000](http://localhost:3000) and click **Start conversation**.
-
-If the agent does not join or transcripts do not appear, run **`agora project doctor --deep`** to check credentials, feature enablement, network reachability, and local env binding.
-
-### Working from a clone of this repository
-
-Use this path if you already cloned **this** repo (for example to contribute or fork):
-
-```bash
-git clone https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs.git
-cd agent-quickstart-nextjs
-agora login
-agora project use <your-project>
-pnpm install
-agora project env write .env.local
-agora project doctor --deep
-pnpm dev
-```
-
-### Deploy to Vercel
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs&project-name=agent-quickstart-nextjs&repository-name=agent-quickstart-nextjs&env=NEXT_PUBLIC_AGORA_APP_ID,NEXT_AGORA_APP_CERTIFICATE&envDescription=Agora%20credentials%20needed%20to%20run%20the%20app&envLink=https%3A%2F%2Fgithub.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs%23run-it&demo-title=Agora%20Conversational%20AI%20Next.js%20Quickstart&demo-description=Official%20Next.js%20quickstart%20for%20building%20browser-based%20voice%20AI%20with%20Agora&demo-image=https%3A%2F%2Fraw.githubusercontent.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs%2Fmain%2F.github%2Fassets%2FConversation-Ai-Client.gif)
-
-To populate Vercel env vars from your bound Agora project:
-
-```bash
-agora project use <your-project>
-agora project env write .env.local
-rg "^(NEXT_PUBLIC_AGORA_APP_ID|NEXT_AGORA_APP_CERTIFICATE)=" .env.local
-```
-
-Copy those two values into Vercel Project Settings -> Environment Variables.
-
-### Environment variables
-
-Defined in [`env.local.example`](env.local.example).
-
-| Variable                     | Required | Notes                                                            |
-| ---------------------------- | :------: | ---------------------------------------------------------------- |
-| `NEXT_PUBLIC_AGORA_APP_ID`   |    ✅    | Agora Console → Project → App ID.                                |
-| `NEXT_AGORA_APP_CERTIFICATE` |    ✅    | Agora Console → Project → App Certificate. **Server-side only.** |
-
-The default agent configuration in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts) uses Agora-managed STT, LLM, and TTS, so no extra vendor API keys are required for the base quickstart.
-
-## Commands
-
-```bash
-# Dev
-pnpm dev                # start the Next.js dev server
-
-# Quality
-pnpm run lint           # eslint
-pnpm run typecheck      # tsc --noEmit
-pnpm run doctor         # local prereqs + env binding
-
-# CI / pre-ship
-pnpm run verify:api     # API contract checks
-pnpm run build          # production build
-pnpm run verify         # doctor + lint + typecheck + verify:api + build
-```
-
-Run `pnpm run verify` before shipping changes — it covers local prerequisites, lint, type safety, the core API route contracts, and the production build.
+1. Student joins the call. The agent opens with a concrete, loaded question (randomly picked from a bank of classic misconception-bait questions — e.g. *"if a machine learning model gets ninety nine percent accuracy on its training data, does that mean it'll do just as well on new, unseen data?"*), not an open-ended "what do you want to learn."
+2. Student answers. The agent does **not** say right/wrong — it asks how they got there.
+3. Based on the answer + reasoning, the agent classifies the turn into one of five buckets (correct answer/correct reasoning, correct answer/wrong reasoning, wrong answer/slip, wrong answer/misconception, insufficient evidence) and picks its next question accordingly — harder variant, a trap question that would fool the flawed reasoning, or a light nudge.
+4. If the student contradicts something they said earlier, the agent notices and asks which one they trust.
+5. If the agent gathers enough evidence of a real misconception (not a single slip), it names the specific flawed rule and says this will be visible to a teacher.
+6. On "End Conversation," the client sends the full transcript to a summary endpoint, which produces a structured report: topic, misconception(s) found with confidence and evidence, strengths, recommended next steps, and whether the session should be escalated to a teacher.
 
 ## Architecture
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./system-architecture-dark.svg">
-  <img src="./system-architecture.svg" alt="System architecture">
-</picture>
+```mermaid
+flowchart LR
+    subgraph Browser
+        UI["Next.js App Router UI\n(LandingPage → ConversationComponent)"]
+    end
+    subgraph "This app (Next.js server)"
+        TOKEN["/api/generate-agora-token"]
+        INVITE["/api/invite-agent"]
+        STOP["/api/stop-conversation"]
+        SUMMARY["/api/session-summary"]
+    end
+    subgraph "Agora Cloud"
+        CAI["Conversational AI Engine\nSTT (Deepgram) → LLM (OpenAI, managed) → TTS (MiniMax)"]
+    end
+    GROQ["Groq (OpenAI-compatible)\nopenai/gpt-oss-120b"]
 
-The browser fetches a combined RTC + RTM token (`buildTokenWithRtm`) from this app, joins the channel using a single RTC client, and uses RTM as the data channel for transcript, agent state, metrics, and error events. The Conversational AI Engine joins the same channel as the shared agent UID in [`lib/agora.ts`](lib/agora.ts) and runs the STT → LLM → TTS pipeline in Agora Cloud.
+    UI -- "1. fetch RTC+RTM token" --> TOKEN
+    UI -- "2. start agent session" --> INVITE
+    INVITE -- "starts agent, sets\nSocratic system prompt" --> CAI
+    UI <-- "RTC audio + RTM transcript/state" --> CAI
+    UI -- "3. end call" --> STOP
+    UI -- "4. transcript" --> SUMMARY
+    SUMMARY -- "one generateObject call" --> GROQ
+    SUMMARY -- "structured report" --> UI
+```
 
-## What You Get
+- **The live conversation never leaves Agora's managed pipeline.** `app/api/invite-agent/route.ts` configures an `Agent` from the `agora-agents` SDK with Agora-managed STT/LLM/TTS (Deepgram, OpenAI `gpt-4o-mini`, MiniMax) — no custom LLM endpoint sits in front of the voice path. This was a deliberate reliability call for the live demo: an earlier version routed the conversation through a self-hosted custom-LLM proxy so per-turn misconception state could be tracked server-side, but that added a public-tunnel dependency and an extra point of failure with no benefit visible to the student. It was reverted in favor of doing the structured analysis once, after the call, from the transcript the client already has.
+- **The structured outcome is a separate, one-shot call**, made directly from the browser to this app's own `/api/session-summary` route (same-origin, no tunnel needed) after the call ends. That route makes a single `generateObject` (Vercel AI SDK) call to Groq's OpenAI-compatible Chat Completions API with a strict JSON Schema, so the report is reliably structured rather than parsed out of prose.
+- State during the call lives entirely in the conversation's own message history (Agora's `maxHistory: 30`) plus the system prompt's instructions to reference earlier turns — there's no separate database. Per AGENTS.md, this project deliberately avoids introducing a database, RAG, auth, or a dashboard for this prototype.
 
-- browser voice client built with Next.js App Router
-- RTC audio plus RTM transcript and state events
-- server routes for token generation, invite, and stop
-- [`AgentVisualizer`](https://agoraio-conversational-ai.github.io/agent-uikit/) for agent state and a built-in transcript panel for live turns
-- per-stage latency header driven by `AGENT_METRICS`
-- Agora-managed default STT, LLM, and TTS configuration
+## How Agora Conversational AI Is Used
 
-## How It Works
+Agora Conversational AI Engine is the **primary and only** live voice interaction layer (mandatory requirement #1) — not a secondary feature:
 
-1. The browser requests an RTC + RTM token from `/api/generate-agora-token`.
-2. The backend invites an Agora cloud agent with `/api/invite-agent`.
-3. The browser joins the channel and publishes mic audio.
-4. The client receives transcript, agent state, and `AGENT_METRICS` (per-stage latency) events over RTM.
-5. On end, the client calls `/api/stop-conversation`, logs out RTM, and unmounts the call view so Agora React hooks clean up RTC publish/join and the local microphone track.
+- `app/api/invite-agent/route.ts` builds and starts the agent (`agora-agents` SDK: `Agent` + `.withStt()/.withLlm()/.withTts()`), including the full Socratic misconception-hunting system prompt, a randomized concept-starter greeting, and tuned VAD (`silence_duration_ms: 700` — longer than the default so students get room to think mid-answer before the turn is considered over).
+- `app/api/generate-agora-token/route.ts` issues combined RTC+RTM tokens (`buildTokenWithRtm`) for the browser.
+- `components/ConversationComponent.tsx` joins the RTC channel, publishes the mic, and uses `AgoraVoiceAI` (Agent Client Toolkit) over RTM for live transcript, agent state, and per-stage latency metrics.
+- `app/api/stop-conversation/route.ts` stops the agent session.
 
-## Optional BYOK
+## Demonstrated Conversational AI Capabilities
 
-The base `.env.local` contract contains only Agora credentials. If you are migrating from a supported provider, uncomment the matching snippet in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts) and add its variables to your local environment.
+(PDF requirement: at least 5 — this project demonstrates 8)
+
+1. **Natural real-time voice interaction** — full ASR → LLM → TTS pipeline via Agora, sub-500ms.
+2. **Barge-in / interruption handling** — Agora's VAD-based turn detection (`agent-quickstart`'s standard interruption path); the student can cut the agent off mid-sentence.
+3. **Natural turn-taking**, tuned for a tutoring context (700ms silence tolerance instead of the 480ms default, so a thinking pause isn't read as "done talking").
+4. **Session-level conversational memory** — the agent references earlier answers and catches contradictions ("earlier you said X, now you're saying Y — which do you trust?").
+5. **Dynamic questioning** — the next question is chosen from the student's reasoning bucket (see "How It Works"), never a fixed script.
+6. **Recovery from corrections** — explicit prompt rule to surface and probe contradictions rather than silently overwrite earlier context.
+7. **Explicit uncertainty handling** — the agent has a named "insufficient evidence" state and is instructed to keep probing rather than force a verdict; the summary schema mirrors this (`overallAssessment: "insufficient_evidence"`).
+8. **Code-switching support** — the system prompt allows the agent to respond naturally in whatever language mix the student uses, rather than forcing English-only.
+
+## External Action / Structured Outcome
+
+(PDF requirement #6 — the agent must do more than answer questions)
+
+At the end of every session, `/api/session-summary` produces a structured learning report from the full transcript:
+
+```
+{
+  topic, overallAssessment,
+  misconceptions: [{ description, confidence, evidence[] }],
+  strengths[], recommendedNextSteps[],
+  escalation: { recommended, reason }
+}
+```
+
+This is rendered as a Session Summary card (`components/SessionSummaryCard.tsx`) the student sees immediately after the call — a real structured artifact, not just a transcript dump. It also implements the **human escalation path** (PDF requirement #8): sessions with a confirmed misconception or a student who explicitly asked for help are flagged `escalation.recommended: true` with a reason, both spoken during the call ("this will be flagged for your teacher") and shown on the summary card.
+
+## AI Limitations & Safety Considerations
+
+- The agent explicitly never claims to be a substitute for a teacher — see the "Human Escalation" section of its system prompt (`app/api/invite-agent/route.ts`).
+- It is instructed to never declare a misconception from a single wrong answer — only after a pattern across multiple turns, with confidence and evidence attached.
+- It is scoped to a small, curated set of foundational concepts (programming fundamentals, algorithms & complexity, data structures, machine learning reasoning, AI systems reasoning); it's instructed to redirect if the student asks about something outside that scope, rather than improvising outside its intended domain.
+- The end-of-session report is generated by an LLM (Groq `openai/gpt-oss-120b`) reading the transcript — it is a best-effort structured summary, not a verified pedagogical assessment, and is explicitly framed to the student/teacher as such rather than an authoritative grade.
+- If the summary call fails (model/network error), the UI shows a clear error state rather than a fabricated or silently-empty report — the failure is never hidden from the user.
+
+## Known Technical Limitations
+
+- The summary/escalation step depends on a second, self-hosted LLM call (Groq) separate from Agora's managed conversational LLM — if that call fails, the conversation itself is unaffected, but no summary is produced for that session.
+- No persistence: summaries live only in browser memory for that session; refreshing the page loses them. There is intentionally no database in this prototype (see AGENTS.md).
+- Escalation is a visible flag on the summary card, not a wired notification/ticketing integration to an actual teacher inbox.
+- Single-user sessions only — no classroom-level aggregation or multi-student view.
+- Misconception detection is fundamentally LLM judgment, not a verified content-specific pedagogical model; false positives/negatives are possible, which is why the system is intentionally conservative about declaring a misconception.
+
+## Future Evolution
+
+- Wire the escalation flag to a real notification (email/Slack) instead of just the summary card.
+- Expand the curated concept set, or let it be configured per classroom/teacher.
+- Persist summaries per student across sessions to track recurring misconceptions over time (would introduce a database — explicitly deferred for this prototype).
+- Revisit per-turn structured state tracking (an earlier iteration of this project prototyped exactly that, routing the live conversation through a custom LLM endpoint) if a more production-ready deployment removes the public-tunnel constraint that made it unsuitable for a live demo.
+
+## Run It
 
 ```bash
-# Deepgram STT
-NEXT_DEEPGRAM_API_KEY=...
+pnpm install
+pnpm dev
+```
 
-# OpenAI-compatible LLM
-NEXT_LLM_URL=https://api.openai.com/v1/chat/completions
-NEXT_LLM_API_KEY=...
+### Environment variables
 
-# ElevenLabs TTS
-NEXT_ELEVENLABS_API_KEY=...
-NEXT_ELEVENLABS_VOICE_ID=...
+| Variable                     | Required | Notes                                                                 |
+| ----------------------------- | :------: | ---------------------------------------------------------------------|
+| `NEXT_PUBLIC_AGORA_APP_ID`   |    ✅    | Agora Console → Project → App ID.                                    |
+| `NEXT_AGORA_APP_CERTIFICATE` |    ✅    | Agora Console → Project → App Certificate. Server-side only.         |
+| `NEXT_LLM_URL`               |    ✅    | OpenAI-compatible Chat Completions URL used by `/api/session-summary` (e.g. Groq: `https://api.groq.com/openai/v1/chat/completions`). |
+| `NEXT_LLM_API_KEY`           |    ✅    | API key for the above.                                               |
+
+The live conversation itself needs only the two Agora credentials — `NEXT_LLM_URL`/`NEXT_LLM_API_KEY` are only used by the post-call summary endpoint.
+
+### Commands
+
+```bash
+pnpm dev                # start the Next.js dev server
+pnpm run lint            # eslint
+pnpm run typecheck       # tsc --noEmit
+pnpm run verify:api      # API contract checks
+pnpm run build           # production build
+pnpm run verify          # doctor + lint + typecheck + verify:api + build
 ```
 
 ## Repo Map
 
 - `app/api/generate-agora-token/route.ts` — issues RTC + RTM tokens
-- `app/api/invite-agent/route.ts` — starts the agent session and configures the pipeline
+- `app/api/invite-agent/route.ts` — starts the agent, Socratic system prompt, VAD tuning, randomized greeting
 - `app/api/stop-conversation/route.ts` — stops the agent session
-- `components/LandingPage.tsx` — entry point: token fetch, RTM login, conversation lifecycle
-- `components/ConversationComponent.tsx` — RTC client, transcript state, `AGENT_METRICS`, mic release
-- `components/QuickstartConversationLayout.tsx` — in-call header, transcript rail, controls dock
-- `components/QuickstartPipelineMetrics.tsx` — per-stage latency chips in the header
-- `components/QuickstartTranscriptPanel.tsx` — live transcript rail
-- `components/QuickstartPreCallCard.tsx` — pre-call hero card
-- `lib/conversation.ts` — transcript normalization and visualizer state mapping
-- `AGENTS.md` — primary agent-facing guide
+- `app/api/session-summary/route.ts` — the external action: structured post-call report + escalation flag
+- `app/api/chat/completions/route.ts` — an OpenAI-compatible SSE proxy scaffold, currently unused by the live path (kept as an extension point; see "Future Evolution")
+- `components/LandingPage.tsx` — pre-call / in-call / summary view state, session lifecycle
+- `components/ConversationComponent.tsx` — RTC client, transcript state, `AGENT_METRICS`
+- `components/SessionSummaryCard.tsx` — renders the structured end-of-session report
+- `lib/conversation.ts` — transcript normalization, visualizer state mapping, transcript→summary-request mapping
+- `types/conversation.ts` — shared request/response contracts
+- `AGENTS.md` — product and engineering guidelines this project follows
 
 ## Troubleshooting
 
 - **Agent does not join or transcripts are missing:** run `agora project doctor --deep`.
-- **`pnpm run doctor` fails:** run `agora project env write .env.local`, then retry.
-- **Manual clone / env values:** `agora project use <your-project>` then `agora project env write .env.local`.
-- **RTM login fails:** keep [`app/api/generate-agora-token/route.ts`](app/api/generate-agora-token/route.ts) on `RtcTokenBuilder.buildTokenWithRtm` — RTC-only tokens will not satisfy `rtm.login`.
-- **Transcript speakers inverted:** check the `uid === "0"` remap in [`components/ConversationComponent.tsx`](components/ConversationComponent.tsx).
-- **Agent never appears in channel:** ensure the shared agent UID in [`lib/agora.ts`](lib/agora.ts) is used by both the client and invite route.
-
-## More Docs
-
-- [docs/ai/L0_repo_card.md](./docs/ai/L0_repo_card.md)
-- [docs/ai/RECIPE.md](./docs/ai/RECIPE.md)
-- [AGENTS.md](./AGENTS.md)
-
-## Contributing
-
-Pull requests welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and conventions.
-
-## Security
-
-Please do **not** open public issues for security reports. Email security@agora.io with details and reproduction steps.
+- **Summary card shows an error:** check `NEXT_LLM_URL`/`NEXT_LLM_API_KEY` are set and the Groq model in `app/api/session-summary/route.ts` hasn't been deprecated (check [Groq's model deprecation page](https://console.groq.com/docs/deprecations)).
+- **Transcript speakers inverted:** check the `uid === "0"` remap in `components/ConversationComponent.tsx`.
 
 ## License
 

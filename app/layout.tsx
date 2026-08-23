@@ -8,9 +8,9 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'Talk to your voice agent | Agora',
+  title: 'Misconception Hunter',
   description:
-    "Next.js quickstart: real-time voice agent with live transcript, streaming audio, and low latency from Agora's Conversational AI Engine—API routes in one repo.",
+    'A voice-native Socratic AI tutor that investigates how you reason, not just what you answer — built on Agora Conversational AI.',
   icons: {
     icon: [
       { url: '/favicon.ico' },

@@ -9,10 +9,13 @@ import type {
   ClientStartRequest,
   AgentResponse,
   AgoraRenewalTokens,
+  SessionSummaryTurn,
+  SessionSummaryResponse,
 } from '../types/conversation';
 import { ErrorBoundary } from './ErrorBoundary';
 import { LoadingSkeleton } from './LoadingSkeleton';
 import { QuickstartPreCallCard } from './QuickstartPreCallCard';
+import { SessionSummaryCard } from './SessionSummaryCard';
 
 // Dynamically import the ConversationComponent with ssr disabled
 const ConversationComponent = dynamic(() => import('./ConversationComponent'), {
@@ -54,8 +57,10 @@ const AgoraProvider = dynamic(
   { ssr: false },
 );
 
+type View = 'pre-call' | 'in-call' | 'summary';
+
 export default function LandingPage() {
-  const [showConversation, setShowConversation] = useState(false);
+  const [view, setView] = useState<View>('pre-call');
 
   // Preload heavy modules on mount so they're already cached when the user
   // clicks "Try it Now" — eliminates the ~1.8s dynamic-import delay.
@@ -66,10 +71,13 @@ export default function LandingPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [agoraData, setAgoraData] = useState<AgoraTokenData | null>(null);
+  const [summary, setSummary] = useState<SessionSummaryResponse | null>(null);
+  const [isSummaryLoading, setIsSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [rtmClient, setRtmClient] = useState<RTMClient | null>(null);
   const [agentJoinError, setAgentJoinError] = useState(false);
 
-  const handleStartConversation = async () => {
+  const handleStartConversation = async (topic?: string) => {
     setIsLoading(true);
     setError(null);
     setAgentJoinError(false);
@@ -98,6 +106,7 @@ export default function LandingPage() {
           body: JSON.stringify({
             requester_id: responseData.uid,
             channel_name: responseData.channel,
+            ...(topic?.trim() && { topic: topic.trim() }),
           } as ClientStartRequest),
         })
           .then(async (res) => {
@@ -130,7 +139,9 @@ export default function LandingPage() {
       // 3. All dependencies ready — store state and show conversation
       setRtmClient(rtm);
       setAgoraData({ ...responseData, agentId: agentData?.agent_id });
-      setShowConversation(true);
+      setSummary(null);
+      setSummaryError(null);
+      setView('in-call');
     } catch (err) {
       setError('Failed to start conversation. Please try again.');
       console.error('Error starting conversation:', err);
@@ -176,7 +187,7 @@ export default function LandingPage() {
     [agoraData],
   );
 
-  const handleEndConversation = async () => {
+  const handleEndConversation = async (transcript: SessionSummaryTurn[]) => {
     // Stop the AI agent
     if (agoraData?.agentId) {
       try {
@@ -198,61 +209,107 @@ export default function LandingPage() {
     // Tear down RTM — owned here since we created it here
     rtmClient?.logout().catch((err) => console.error('RTM logout error:', err));
     setRtmClient(null);
-    setShowConversation(false);
+    setView('summary');
+
+    // Structured learning outcome: generated once, after the call ends, from
+    // the transcript the client already has — no live pipeline dependency.
+    if (transcript.length === 0) {
+      setSummaryError('The conversation was too short to summarize.');
+      return;
+    }
+
+    setIsSummaryLoading(true);
+    setSummaryError(null);
+    try {
+      const response = await fetch('/api/session-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to generate summary');
+      }
+      const data = (await response.json()) as SessionSummaryResponse;
+      setSummary(data);
+    } catch (err) {
+      console.error('Error generating session summary:', err);
+      setSummaryError('Could not generate a summary for this session.');
+    } finally {
+      setIsSummaryLoading(false);
+    }
+  };
+
+  const handleStartNewSession = () => {
+    setAgoraData(null);
+    setSummary(null);
+    setSummaryError(null);
+    setView('pre-call');
   };
 
   return (
     <div className="relative flex h-dvh min-h-screen flex-col overflow-hidden bg-background text-foreground">
-      {/* Hero shell: either shows the pre-call CTA or swaps in the live conversation experience. */}
+      {/* Hero shell: pre-call CTA, live conversation, or the post-call summary. */}
       <div
         className={`flex min-h-0 flex-1 flex-col ${
-          showConversation
-            ? 'items-stretch justify-start'
-            : 'items-center justify-center'
+          view === 'in-call'
+            ? 'items-stretch justify-start overflow-hidden'
+            : 'items-center justify-start overflow-y-auto py-10'
         }`}
       >
         <div
           className={`z-10 flex min-h-0 flex-1 flex-col ${
-            showConversation
+            view === 'in-call'
               ? 'h-full w-full max-w-none items-stretch gap-0 px-0 text-left'
-              : 'w-full max-w-none items-center justify-center px-4 text-center'
+              : 'w-full max-w-none items-center justify-start px-4 text-center'
           }`}
         >
-          {!showConversation ? (
+          {view === 'pre-call' && (
             <QuickstartPreCallCard
               isLoading={isLoading}
               error={error}
               onStartConversation={handleStartConversation}
             />
-          ) : agoraData && rtmClient ? (
-            <>
-              {/* Non-fatal invite warning: the browser session can still render even if agent start failed. */}
-              {agentJoinError && (
-                <div className="p-3 bg-destructive/10 rounded-md text-destructive text-sm max-w-sm">
-                  Failed to connect with AI agent. The conversation may not work
-                  as expected.
-                </div>
-              )}
-              {/* Browser-only conversation mount: RTC provider, error boundary, and lazy-loaded call UI. */}
-              <Suspense fallback={<LoadingSkeleton />}>
-                <ErrorBoundary>
-                  <AgoraProvider>
-                    <ConversationComponent
-                      agoraData={agoraData}
-                      rtmClient={rtmClient}
-                      onTokenWillExpire={handleTokenWillExpire}
-                      onEndConversation={handleEndConversation}
-                    />
-                  </AgoraProvider>
-                </ErrorBoundary>
-              </Suspense>
-            </>
-          ) : (
-            /* Fallback if session bootstrap partially succeeded but required state is missing. */
-            <p className="text-sm text-muted-foreground">
-              Failed to load conversation data.
-            </p>
           )}
+
+          {view === 'summary' && (
+            <SessionSummaryCard
+              isLoading={isSummaryLoading}
+              error={summaryError}
+              summary={summary}
+              onStartNewSession={handleStartNewSession}
+            />
+          )}
+
+          {view === 'in-call' &&
+            (agoraData && rtmClient ? (
+              <>
+                {/* Non-fatal invite warning: the browser session can still render even if agent start failed. */}
+                {agentJoinError && (
+                  <div className="p-3 bg-destructive/10 rounded-md text-destructive text-sm max-w-sm">
+                    Failed to connect with AI agent. The conversation may not
+                    work as expected.
+                  </div>
+                )}
+                {/* Browser-only conversation mount: RTC provider, error boundary, and lazy-loaded call UI. */}
+                <Suspense fallback={<LoadingSkeleton />}>
+                  <ErrorBoundary>
+                    <AgoraProvider>
+                      <ConversationComponent
+                        agoraData={agoraData}
+                        rtmClient={rtmClient}
+                        onTokenWillExpire={handleTokenWillExpire}
+                        onEndConversation={handleEndConversation}
+                      />
+                    </AgoraProvider>
+                  </ErrorBoundary>
+                </Suspense>
+              </>
+            ) : (
+              /* Fallback if session bootstrap partially succeeded but required state is missing. */
+              <p className="text-sm text-muted-foreground">
+                Failed to load conversation data.
+              </p>
+            ))}
         </div>
       </div>
 

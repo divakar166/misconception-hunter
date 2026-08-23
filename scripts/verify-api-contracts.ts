@@ -291,6 +291,285 @@ async function verifyChatCompletionsSseDone() {
   }
 }
 
+async function verifySessionSummaryValidation() {
+  const { createSessionSummaryHandler } =
+    await import('../app/api/session-summary/route');
+  const originalApiKey = process.env.NEXT_LLM_API_KEY;
+  const originalUrl = process.env.NEXT_LLM_URL;
+  process.env.NEXT_LLM_API_KEY = 'test-key';
+  process.env.NEXT_LLM_URL = 'https://example.test/v1/chat/completions';
+
+  const handler = createSessionSummaryHandler({
+    createOpenAIClient: (() => {
+      throw new Error('createOpenAI should not be called for an empty transcript');
+    }) as never,
+    generateObjectImpl: (() => {
+      throw new Error('generateObject should not be called for an empty transcript');
+    }) as never,
+  });
+
+  try {
+    const request = new NextRequest('http://localhost:3000/api/session-summary', {
+      body: JSON.stringify({ transcript: [] }),
+      method: 'POST',
+    });
+    const response = await handler(request);
+    const body = await getJson(response);
+
+    assert(
+      response.status === 400,
+      'POST /api/session-summary should reject an empty transcript',
+    );
+    assert(
+      body.error === 'transcript is required and must be a non-empty array',
+      'POST /api/session-summary should explain the validation failure',
+    );
+  } finally {
+    if (originalApiKey === undefined) {
+      delete process.env.NEXT_LLM_API_KEY;
+    } else {
+      process.env.NEXT_LLM_API_KEY = originalApiKey;
+    }
+    if (originalUrl === undefined) {
+      delete process.env.NEXT_LLM_URL;
+    } else {
+      process.env.NEXT_LLM_URL = originalUrl;
+    }
+  }
+}
+
+async function verifySessionSummaryMissingEnv() {
+  const { createSessionSummaryHandler } =
+    await import('../app/api/session-summary/route');
+  const originalApiKey = process.env.NEXT_LLM_API_KEY;
+  const originalUrl = process.env.NEXT_LLM_URL;
+  delete process.env.NEXT_LLM_API_KEY;
+  delete process.env.NEXT_LLM_URL;
+
+  const handler = createSessionSummaryHandler({
+    createOpenAIClient: (() => {
+      throw new Error('createOpenAI should not be called when env is missing');
+    }) as never,
+    generateObjectImpl: (() => {
+      throw new Error('generateObject should not be called when env is missing');
+    }) as never,
+  });
+
+  try {
+    const request = new NextRequest('http://localhost:3000/api/session-summary', {
+      body: JSON.stringify({
+        transcript: [{ role: 'user', text: 'The truck pushes harder.' }],
+      }),
+      method: 'POST',
+    });
+    const response = await handler(request);
+    const body = await getJson(response);
+
+    assert(
+      response.status === 500,
+      'POST /api/session-summary should reject missing LLM env',
+    );
+    assert(
+      body.error === 'NEXT_LLM_API_KEY and NEXT_LLM_URL must be set',
+      'POST /api/session-summary should explain missing LLM env',
+    );
+  } finally {
+    if (originalApiKey === undefined) {
+      delete process.env.NEXT_LLM_API_KEY;
+    } else {
+      process.env.NEXT_LLM_API_KEY = originalApiKey;
+    }
+    if (originalUrl === undefined) {
+      delete process.env.NEXT_LLM_URL;
+    } else {
+      process.env.NEXT_LLM_URL = originalUrl;
+    }
+  }
+}
+
+async function verifySessionSummarySuccess() {
+  const { createSessionSummaryHandler } =
+    await import('../app/api/session-summary/route');
+  const originalApiKey = process.env.NEXT_LLM_API_KEY;
+  const originalUrl = process.env.NEXT_LLM_URL;
+  process.env.NEXT_LLM_API_KEY = 'test-key';
+  process.env.NEXT_LLM_URL = 'https://example.test/v1/chat/completions';
+
+  let capturedBaseUrl: string | undefined;
+  let capturedModelId: string | undefined;
+  let capturedPrompt: unknown;
+
+  const mockSummary = {
+    topic: "Newton's third law",
+    overallAssessment: 'insufficient_evidence',
+    misconceptions: [],
+    strengths: ['Correctly identified the two forces involved'],
+    recommendedNextSteps: ['Revisit force pairs with unequal masses'],
+    escalation: { recommended: false, reason: '' },
+  };
+
+  const handler = createSessionSummaryHandler({
+    createOpenAIClient: ((options: { baseURL?: string }) => {
+      capturedBaseUrl = options.baseURL;
+      const model = (modelId: string) => {
+        capturedModelId = modelId;
+        return { modelId };
+      };
+      model.chat = model;
+      return model;
+    }) as never,
+    generateObjectImpl: ((options: { prompt?: unknown }) => {
+      capturedPrompt = options.prompt;
+      return { object: mockSummary };
+    }) as never,
+  });
+
+  try {
+    const request = new NextRequest('http://localhost:3000/api/session-summary', {
+      body: JSON.stringify({
+        transcript: [
+          { role: 'user', text: 'The truck pushes harder than the car.' },
+          { role: 'assistant', text: 'What makes you think that?' },
+        ],
+      }),
+      method: 'POST',
+    });
+    const response = await handler(request);
+    const body = await getJson(response);
+
+    assert(
+      response.status === 200,
+      'POST /api/session-summary should return 200 on success',
+    );
+    assert(
+      JSON.stringify(body) === JSON.stringify(mockSummary),
+      'POST /api/session-summary should return the generated summary',
+    );
+    assert(
+      capturedBaseUrl === 'https://example.test/v1',
+      'POST /api/session-summary should pass base URL without /chat/completions',
+    );
+    assert(
+      capturedModelId === 'openai/gpt-oss-120b',
+      'POST /api/session-summary should route to the pinned server model',
+    );
+    assert(
+      typeof capturedPrompt === 'string' &&
+        (capturedPrompt as string).includes('Student: The truck pushes harder') &&
+        (capturedPrompt as string).includes('Tutor: What makes you think that?'),
+      'POST /api/session-summary should format the transcript into the prompt',
+    );
+  } finally {
+    if (originalApiKey === undefined) {
+      delete process.env.NEXT_LLM_API_KEY;
+    } else {
+      process.env.NEXT_LLM_API_KEY = originalApiKey;
+    }
+    if (originalUrl === undefined) {
+      delete process.env.NEXT_LLM_URL;
+    } else {
+      process.env.NEXT_LLM_URL = originalUrl;
+    }
+  }
+}
+
+async function verifySuggestTopicMissingEnv() {
+  const { createSuggestTopicHandler } =
+    await import('../app/api/suggest-topic/route');
+  const originalApiKey = process.env.NEXT_LLM_API_KEY;
+  const originalUrl = process.env.NEXT_LLM_URL;
+  delete process.env.NEXT_LLM_API_KEY;
+  delete process.env.NEXT_LLM_URL;
+
+  const handler = createSuggestTopicHandler({
+    createOpenAIClient: (() => {
+      throw new Error('createOpenAI should not be called when env is missing');
+    }) as never,
+    generateTextImpl: (() => {
+      throw new Error('generateText should not be called when env is missing');
+    }) as never,
+  });
+
+  try {
+    const response = await handler();
+    const body = await getJson(response);
+
+    assert(
+      response.status === 500,
+      'POST /api/suggest-topic should reject missing LLM env',
+    );
+    assert(
+      body.error === 'NEXT_LLM_API_KEY and NEXT_LLM_URL must be set',
+      'POST /api/suggest-topic should explain missing LLM env',
+    );
+  } finally {
+    if (originalApiKey === undefined) {
+      delete process.env.NEXT_LLM_API_KEY;
+    } else {
+      process.env.NEXT_LLM_API_KEY = originalApiKey;
+    }
+    if (originalUrl === undefined) {
+      delete process.env.NEXT_LLM_URL;
+    } else {
+      process.env.NEXT_LLM_URL = originalUrl;
+    }
+  }
+}
+
+async function verifySuggestTopicSuccess() {
+  const { createSuggestTopicHandler } =
+    await import('../app/api/suggest-topic/route');
+  const originalApiKey = process.env.NEXT_LLM_API_KEY;
+  const originalUrl = process.env.NEXT_LLM_URL;
+  process.env.NEXT_LLM_API_KEY = 'test-key';
+  process.env.NEXT_LLM_URL = 'https://example.test/v1/chat/completions';
+
+  let capturedModelId: string | undefined;
+
+  const handler = createSuggestTopicHandler({
+    createOpenAIClient: (() => {
+      const model = (modelId: string) => {
+        capturedModelId = modelId;
+        return { modelId };
+      };
+      model.chat = model;
+      return model;
+    }) as never,
+    generateTextImpl: (() => ({
+      text: '"Does more training data always reduce bias?"',
+    })) as never,
+  });
+
+  try {
+    const response = await handler();
+    const body = await getJson(response);
+
+    assert(
+      response.status === 200,
+      'POST /api/suggest-topic should return 200 on success',
+    );
+    assert(
+      body.topic === 'Does more training data always reduce bias?',
+      'POST /api/suggest-topic should return the trimmed, unquoted suggestion',
+    );
+    assert(
+      capturedModelId === 'openai/gpt-oss-120b',
+      'POST /api/suggest-topic should route to the pinned server model',
+    );
+  } finally {
+    if (originalApiKey === undefined) {
+      delete process.env.NEXT_LLM_API_KEY;
+    } else {
+      process.env.NEXT_LLM_API_KEY = originalApiKey;
+    }
+    if (originalUrl === undefined) {
+      delete process.env.NEXT_LLM_URL;
+    } else {
+      process.env.NEXT_LLM_URL = originalUrl;
+    }
+  }
+}
+
 async function verifyInviteAgentValidation() {
   const { POST: inviteAgent } = await import('../app/api/invite-agent/route');
   const request = new NextRequest('http://localhost:3000/api/invite-agent', {
@@ -451,6 +730,11 @@ async function main() {
   await verifyChatCompletionsMissingEnv();
   await verifyChatCompletionsInvalidJson();
   await verifyChatCompletionsSseDone();
+  await verifySessionSummaryValidation();
+  await verifySessionSummaryMissingEnv();
+  await verifySessionSummarySuccess();
+  await verifySuggestTopicMissingEnv();
+  await verifySuggestTopicSuccess();
   await verifyInviteAgentValidation();
   await verifyInviteAgentSuccess();
   await verifyStopConversationValidation();

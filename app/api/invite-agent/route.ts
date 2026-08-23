@@ -16,12 +16,14 @@ import { DEFAULT_AGENT_UID } from '@/lib/agora';
 const MISCONCEPTION_HUNTER_PROMPT = `You are the **Misconception Hunter**, a Socratic learning companion. Your job is NOT to answer questions or teach facts. Your job is to understand *how a student is reasoning* about a concept and find out whether that reasoning has a misconception hiding in it.
 
 # Your Scope
-For this session, focus on a small set of foundational concepts you can probe deeply (pick whichever the student brings up or drifts toward — do not introduce unrelated topics):
-- Basic mechanics: force, motion, gravity, inertia
-- Basic math reasoning: fractions, ratios, negative numbers, percentages
-- Basic programming reasoning: variables, loops, recursion, references vs. values
+For this session, focus on a small set of foundational computer science and AI concepts you can probe deeply (pick whichever the student brings up or drifts toward — do not introduce unrelated topics):
+- Programming fundamentals: variables, loops, recursion, references vs. values
+- Algorithms & complexity: what Big-O actually measures, how running time scales with input size
+- Data structures: why different structures (arrays, hash sets, trees) have different performance tradeoffs
+- Machine learning reasoning: how a model learns from training data, overfitting vs. generalizing, what accuracy numbers actually mean
+- AI systems reasoning: where bias in AI systems comes from, what "more parameters/layers" does and doesn't guarantee
 
-If the student raises a topic outside these areas, gently redirect: acknowledge it, then steer toward one of the above.
+If the student raises a topic outside these areas, gently redirect: acknowledge it, then steer toward one of the above. Exception: if your opening greeting already named a specific topic (student-supplied or suggested), treat that topic as in-scope for this session even if it isn't explicitly listed above.
 
 # The Core Rule: Investigate Before You Correct
 You are explicitly forbidden from acting like a normal answer-giving tutor. When a student gives an answer:
@@ -44,6 +46,12 @@ Do not say "you have a misconception" casually. Only state it once you have real
 # Session Memory
 This is a continuous conversation. Actively refer back to what the student said earlier in the session — their prior answers, corrections they made, things they were unsure about. If a later answer contradicts an earlier one, point that out and ask which one they trust more. Track their uncertainty: if they hedge ("I think", "maybe", "not sure"), treat that as a signal worth exploring, not something to smooth over.
 
+# Human Escalation
+You are not a substitute for a teacher, and you should say so plainly when it matters:
+- If the student explicitly asks for a real teacher/tutor, or seems frustrated/stuck rather than just uncertain, don't push the Socratic questioning further — acknowledge it and say this session will be flagged for their teacher to review.
+- If you confirm a misconception with strong evidence, mention once — briefly, not as a lecture — that it'll show up in a summary their teacher can see, so they're not left to self-correct alone.
+- Never claim authority you don't have. You are a conversation partner helping surface reasoning, not a grader or a final authority on whether something is "wrong."
+
 # Persona & Tone
 - Curious and warm, like a peer thinking out loud with them — never clinical or exam-like.
 - Genuinely interested in HOW they think, not just whether they're right.
@@ -55,8 +63,38 @@ This is a continuous conversation. Actively refer back to what the student said 
 - **Never lecture unprompted**: If you must eventually explain something, keep it to one sentence and follow it with a question.
 - **It's fine to say you're not sure yet**: If the evidence is mixed, say so and ask another question instead of forcing a verdict.`;
 
-// First thing the agent says when a user joins the channel.
-const GREETING = `Hey, I'm here to think through a concept with you — pick something you've been learning, and tell me your answer to a question about it. I'm more interested in how you got there than whether it's right.`;
+// Starter questions the agent opens with — one picked at random per session.
+// Each targets a specific, well-known misconception in one of the CS/AI
+// domains from MISCONCEPTION_HUNTER_PROMPT's scope, so the first exchange
+// already has something concrete to probe instead of asking the student to
+// invent a topic cold.
+const CONCEPT_STARTERS = [
+  'if you pass an array into a function and the function changes one of its elements, does that change show up outside the function too?',
+  'does a loop that runs from i equals zero while i is less than ten go ten times or eleven times?',
+  'what do you think happens if a recursive function is called but it has no base case?',
+  "if you double the size of the input to an algorithm that runs in O(n log n) time, does the running time also just double?",
+  'if you want to check whether a value exists in a list of a million items, is searching a plain array just as fast as using a hash set?',
+  "if a machine learning model gets ninety nine percent accuracy on its training data, does that mean it'll do just as well on new, unseen data?",
+  'if an AI model is trained on a huge amount of data, does that automatically mean its predictions are unbiased?',
+  'does a neural network with more layers always perform better than one with fewer layers?',
+] as const;
+
+// `topic` may be a full loaded question (from the "Suggest one" LLM button —
+// mirrors the shape of CONCEPT_STARTERS) or a bare phrase the student typed
+// themselves (e.g. "recursion"). Phrasing branches on whether it reads as a
+// question so either input produces a natural-sounding opener.
+function pickGreeting(topic?: string): string {
+  const trimmedTopic = topic?.trim();
+  if (trimmedTopic) {
+    return trimmedTopic.endsWith('?')
+      ? `Hey! Let's think through something together — ${trimmedTopic} Tell me your answer, and walk me through how you got there.`
+      : `Hey! Let's think through ${trimmedTopic} together. Tell me something you believe about it, and walk me through why you think that.`;
+  }
+
+  const starter =
+    CONCEPT_STARTERS[Math.floor(Math.random() * CONCEPT_STARTERS.length)];
+  return `Hey! Let's think through something together — ${starter} Tell me your answer, and walk me through how you got there.`;
+}
 
 // agentUid identifies the AI in the RTC channel and shares its default with the client.
 const agentUid = String(DEFAULT_AGENT_UID);
@@ -72,7 +110,7 @@ export async function POST(request: NextRequest) {
     // --- 1. Parse request ---
 
     const body: ClientStartRequest = await request.json();
-    const { requester_id, channel_name } = body;
+    const { requester_id, channel_name, topic } = body;
 
     // Validate required env vars on first request so misconfiguration surfaces
     // with a clear error message rather than a silent failure.
@@ -88,6 +126,10 @@ export async function POST(request: NextRequest) {
 
     // --- 2. Build and start the agent ---
 
+    // Uses the student-supplied/suggested topic if given, otherwise picks a
+    // fresh random starter so repeat demos don't open on the same question.
+    const greeting = pickGreeting(topic);
+
     // AgoraClient authenticates API calls to the Agora Conversational AI service.
     // area: change to Area.EU or Area.AP for European or Asia-Pacific deployments.
     const client = new AgoraClient({
@@ -101,7 +143,7 @@ export async function POST(request: NextRequest) {
     const agent = new Agent({
       client,
       instructions: MISCONCEPTION_HUNTER_PROMPT,
-      greeting: GREETING,
+      greeting,
       failureMessage: 'Please wait a moment.',
       maxHistory: 50,
       // VAD controls how the agent detects the start and end of a user's turn.
@@ -155,7 +197,7 @@ export async function POST(request: NextRequest) {
       .withLlm(
         new OpenAI({
           model: 'gpt-4o-mini',
-          greetingMessage: GREETING,
+          greetingMessage: greeting,
           failureMessage: 'Please wait a moment.',
           // Raised from 15 — misconception-hunting threads span more turns than a
           // support Q&A, and earlier answers in the session need to stay in context.
@@ -166,18 +208,6 @@ export async function POST(request: NextRequest) {
             top_p: 0.95,
           },
         }),
-        // BYOK: uncomment the following block and set NEXT_LLM_API_KEY and NEXT_LLM_URL
-        // new OpenAI({
-        //   apiKey: requireEnv('NEXT_LLM_API_KEY'),
-        //   url: requireEnv('NEXT_LLM_URL'),
-        //   model: 'gpt-4o-mini',
-        //   greetingMessage: GREETING,
-        //   failureMessage: 'Please wait a moment.',
-        //   maxHistory: 15,
-        //   maxTokens: 1024,
-        //   temperature: 0.7,
-        //   topP: 0.95,
-        // }),
       )
       .withTts(
         new MiniMaxTTS({
