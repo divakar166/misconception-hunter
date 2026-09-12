@@ -8,6 +8,18 @@ Most AI tutors are answer machines: ask a question, get told if you're right, mo
 
 **Misconception Hunter never grades the first answer.** It asks *how* the student got there, keeps asking until it has real evidence, and only names a misconception once a pattern shows up across multiple turns — never from one wrong answer.
 
+## What's Built On Top of the Agora Quickstart
+
+This project starts from Agora's official `agent-quickstart-nextjs` template — the RTC/RTM join flow, the token route's plumbing, the UI kit, and CI scaffolding are the template's. The product work on top of that:
+
+- The Socratic misconception-hunting system prompt, including the five-bucket reasoning taxonomy that decides the agent's next question (`app/api/invite-agent/route.ts`).
+- The VAD retune to a 700ms silence tolerance — long enough for a student to think mid-answer without the turn being cut off, tuned specifically for this tutoring use case rather than the template's support-chat default.
+- The structured end-of-session report with a strict JSON Schema and a human-escalation flag (`app/api/session-summary/route.ts`, `components/SessionSummaryCard.tsx`).
+- The stateless session-ticket security model that scopes token renewal and agent start/stop to the session that created them (`lib/session-ticket.ts`) — the template's version trusted a caller-supplied channel/uid outright.
+- The concept-starter question bank, the topic suggester, and the session duration cap.
+
+See `ROADMAP.md` for what's built, what's in progress, and what's next.
+
 ## Target User
 
 A student practicing foundational computer science and AI reasoning out loud (programming fundamentals, algorithms & complexity, data structures, machine learning) — the kind of person who'd otherwise be limited to a textbook or a one-shot answer bot. Secondarily, a teacher who receives the end-of-session report for the small number of sessions the AI flags as needing a human look, instead of having to review every transcript.
@@ -107,6 +119,7 @@ This is rendered as a Session Summary card (`components/SessionSummaryCard.tsx`)
 - Escalation is a visible flag on the summary card, not a wired notification/ticketing integration to an actual teacher inbox.
 - Single-user sessions only — no classroom-level aggregation or multi-student view.
 - Misconception detection is fundamentally LLM judgment, not a verified content-specific pedagogical model; false positives/negatives are possible, which is why the system is intentionally conservative about declaring a misconception.
+- No per-IP or global rate limiting yet on `/api/invite-agent` — a hard session duration cap (`NEXT_PUBLIC_MAX_SESSION_SECONDS`) bounds the damage from any one session, but nothing yet stops a caller from starting many sessions back to back. See `ROADMAP.md`.
 
 ## Future Evolution
 
@@ -130,8 +143,14 @@ pnpm dev
 | `NEXT_AGORA_APP_CERTIFICATE` |    ✅    | Agora Console → Project → App Certificate. Server-side only.         |
 | `NEXT_LLM_URL`               |    ✅    | OpenAI-compatible Chat Completions URL used by `/api/session-summary` (e.g. Groq: `https://api.groq.com/openai/v1/chat/completions`). |
 | `NEXT_LLM_API_KEY`           |    ✅    | API key for the above.                                               |
+| `SESSION_TICKET_SECRET`      |    ➖    | Signs the session tickets described below. Falls back to `NEXT_AGORA_APP_CERTIFICATE` if unset — fine for local dev, set a dedicated value in any deployed environment. |
+| `NEXT_PUBLIC_MAX_SESSION_SECONDS` |  ➖  | Hard cap, in seconds, on a single agent session (server `expiresIn` + client auto-end countdown). Defaults to `600` (10 min). Keep this low on a public deployment — it's the main lever on Agora spend per visitor. |
 
 The live conversation itself needs only the two Agora credentials — `NEXT_LLM_URL`/`NEXT_LLM_API_KEY` are only used by the post-call summary endpoint.
+
+### Session tickets (why `/api/generate-agora-token` returns a `ticket`)
+
+`/api/generate-agora-token` no longer trusts a caller-supplied `channel`/`uid` to mint a token — early on, any caller could pass an arbitrary existing channel and get a valid token to join (and publish audio into) someone else's live session. It now returns a signed, stateless **session ticket** (`lib/session-ticket.ts`) alongside the token: an HMAC-signed `{channel, uid, exp}` the client carries forward. Token renewal, `/api/invite-agent`, and `/api/stop-conversation` (via a similarly-signed `control_ticket`) all derive their channel/uid/agent identity from a verified ticket rather than from loose request parameters. This is not user authentication — it doesn't identify *who* the caller is — only proof that they're the same party the server handed this specific session to. See the comment at the top of `lib/session-ticket.ts` for the full reasoning.
 
 ### Commands
 
