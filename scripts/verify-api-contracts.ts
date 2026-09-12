@@ -1,6 +1,7 @@
 import { AgoraClient, Agent } from 'agora-agents';
 import { RtcTokenBuilder } from 'agora-token';
 import { NextRequest } from 'next/server';
+import { createTicket } from '../lib/session-ticket';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -15,7 +16,7 @@ function getJson(response: Response) {
 process.env.NEXT_PUBLIC_AGORA_APP_ID = '0123456789abcdef0123456789abcdef';
 process.env.NEXT_AGORA_APP_CERTIFICATE = 'fedcba9876543210fedcba9876543210';
 
-async function verifyGenerateAgoraTokenRoute() {
+async function verifyGenerateAgoraTokenInitialMint() {
   const { GET: generateAgoraToken } =
     await import('../app/api/generate-agora-token/route');
   const originalBuildTokenWithRtm = RtcTokenBuilder.buildTokenWithRtm;
@@ -27,9 +28,9 @@ async function verifyGenerateAgoraTokenRoute() {
   }) as typeof RtcTokenBuilder.buildTokenWithRtm;
 
   try {
-    const request = new NextRequest(
-      'http://localhost:3000/api/generate-agora-token?uid=4321&channel=test-channel',
-    );
+    // No `ticket` -> a fresh session: channel and uid must be server-generated,
+    // never trusted from the caller.
+    const request = new NextRequest('http://localhost:3000/api/generate-agora-token');
     const response = await generateAgoraToken(request);
     const body = await getJson(response);
 
@@ -42,64 +43,110 @@ async function verifyGenerateAgoraTokenRoute() {
       'GET /api/generate-agora-token should return the built token',
     );
     assert(
-      body.uid === '4321',
-      'GET /api/generate-agora-token should preserve the requested uid',
+      typeof body.uid === 'string' && body.uid !== '0' && Number(body.uid) > 0,
+      'GET /api/generate-agora-token should generate an RTM-safe, non-zero uid',
     );
     assert(
-      body.channel === 'test-channel',
-      'GET /api/generate-agora-token should preserve the requested channel',
-    );
-
-    assert(
-      Array.isArray(tokenBuilderArgs),
-      'GET /api/generate-agora-token should call buildTokenWithRtm',
+      typeof body.channel === 'string' && body.channel.startsWith('ai-conversation-'),
+      'GET /api/generate-agora-token should generate a channel name',
     );
     assert(
-      tokenBuilderArgs?.[2] === 'test-channel',
-      'buildTokenWithRtm should use the requested channel',
+      typeof body.ticket === 'string' && body.ticket.includes('.'),
+      'GET /api/generate-agora-token should return a signed session ticket',
     );
     assert(
-      tokenBuilderArgs?.[3] === '4321',
-      'buildTokenWithRtm should receive the requested uid as account string',
+      Array.isArray(tokenBuilderArgs) &&
+        tokenBuilderArgs[2] === body.channel &&
+        tokenBuilderArgs[3] === body.uid,
+      'buildTokenWithRtm should be called with the generated channel/uid',
     );
   } finally {
     RtcTokenBuilder.buildTokenWithRtm = originalBuildTokenWithRtm;
   }
 }
 
-async function verifyGenerateAgoraTokenReplacesZeroUid() {
+async function verifyGenerateAgoraTokenIgnoresQueryOverride() {
+  const { GET: generateAgoraToken } =
+    await import('../app/api/generate-agora-token/route');
+  const originalBuildTokenWithRtm = RtcTokenBuilder.buildTokenWithRtm;
+  RtcTokenBuilder.buildTokenWithRtm = (() => 'mock-rtc-rtm-token') as typeof RtcTokenBuilder.buildTokenWithRtm;
+
+  try {
+    // Regression guard for the fixed vulnerability: without a valid `ticket`,
+    // a caller-supplied channel/uid must be ignored, not used to mint a token
+    // for a channel the caller doesn't own.
+    const request = new NextRequest(
+      'http://localhost:3000/api/generate-agora-token?uid=4321&channel=someone-elses-channel',
+    );
+    const response = await generateAgoraToken(request);
+    const body = await getJson(response);
+
+    assert(response.status === 200, 'GET /api/generate-agora-token should still return 200');
+    assert(
+      body.channel !== 'someone-elses-channel',
+      'GET /api/generate-agora-token must not mint a token for a caller-supplied channel',
+    );
+    assert(
+      body.uid !== '4321',
+      'GET /api/generate-agora-token must not mint a token for a caller-supplied uid',
+    );
+  } finally {
+    RtcTokenBuilder.buildTokenWithRtm = originalBuildTokenWithRtm;
+  }
+}
+
+async function verifyGenerateAgoraTokenRenewsWithValidTicket() {
   const { GET: generateAgoraToken } =
     await import('../app/api/generate-agora-token/route');
   const originalBuildTokenWithRtm = RtcTokenBuilder.buildTokenWithRtm;
   let tokenBuilderArgs: unknown[] | null = null;
-
   RtcTokenBuilder.buildTokenWithRtm = ((...args: unknown[]) => {
     tokenBuilderArgs = args;
     return 'mock-rtc-rtm-token';
   }) as typeof RtcTokenBuilder.buildTokenWithRtm;
 
   try {
+    const ticket = createTicket({ channel: 'existing-channel', uid: '7777' });
     const request = new NextRequest(
-      'http://localhost:3000/api/generate-agora-token?uid=0&channel=test-channel',
+      `http://localhost:3000/api/generate-agora-token?ticket=${encodeURIComponent(ticket)}`,
     );
     const response = await generateAgoraToken(request);
     const body = await getJson(response);
 
+    assert(response.status === 200, 'GET .../generate-agora-token with a valid ticket should return 200');
     assert(
-      response.status === 200,
-      'GET /api/generate-agora-token?uid=0 should return 200',
+      body.channel === 'existing-channel' && body.uid === '7777',
+      'GET .../generate-agora-token with a valid ticket should renew for that ticket\'s channel/uid',
     );
     assert(
-      typeof body.uid === 'string' && body.uid !== '0',
-      'GET /api/generate-agora-token?uid=0 should generate an RTM-safe uid',
+      Array.isArray(tokenBuilderArgs) &&
+        tokenBuilderArgs[2] === 'existing-channel' &&
+        tokenBuilderArgs[3] === '7777',
+      'buildTokenWithRtm should be called with the ticket\'s channel/uid',
     );
     assert(
-      Array.isArray(tokenBuilderArgs) && tokenBuilderArgs[3] === body.uid,
-      'buildTokenWithRtm should mint the token for the generated uid',
+      typeof body.ticket === 'string' && body.ticket.includes('.'),
+      'a fresh ticket should be issued on renewal so the chain can continue',
     );
   } finally {
     RtcTokenBuilder.buildTokenWithRtm = originalBuildTokenWithRtm;
   }
+}
+
+async function verifyGenerateAgoraTokenRejectsInvalidTicket() {
+  const { GET: generateAgoraToken } =
+    await import('../app/api/generate-agora-token/route');
+  const request = new NextRequest(
+    'http://localhost:3000/api/generate-agora-token?ticket=not-a-real-ticket',
+  );
+  const response = await generateAgoraToken(request);
+  const body = await getJson(response);
+
+  assert(response.status === 401, 'GET .../generate-agora-token with a bad ticket should return 401');
+  assert(
+    body.error === 'Invalid or expired session ticket',
+    'GET .../generate-agora-token should explain the invalid ticket',
+  );
 }
 
 async function verifyChatCompletionsMissingEnv() {
@@ -573,19 +620,19 @@ async function verifySuggestTopicSuccess() {
 async function verifyInviteAgentValidation() {
   const { POST: inviteAgent } = await import('../app/api/invite-agent/route');
   const request = new NextRequest('http://localhost:3000/api/invite-agent', {
-    body: JSON.stringify({ channel_name: 'missing-requester' }),
+    body: JSON.stringify({}),
     method: 'POST',
   });
   const response = await inviteAgent(request);
   const body = await getJson(response);
 
   assert(
-    response.status === 400,
-    'POST /api/invite-agent should reject missing fields',
+    response.status === 401,
+    'POST /api/invite-agent should reject a missing session ticket',
   );
   assert(
-    body.error === 'channel_name and requester_id are required',
-    'POST /api/invite-agent should explain validation failure',
+    body.error === 'Invalid or expired session ticket',
+    'POST /api/invite-agent should explain the missing/invalid ticket',
   );
 }
 
@@ -610,11 +657,9 @@ async function verifyInviteAgentSuccess() {
   }) as unknown as typeof Agent.prototype.createSession;
 
   try {
+    const ticket = createTicket({ channel: 'test-channel', uid: 'user-4321' });
     const request = new NextRequest('http://localhost:3000/api/invite-agent', {
-      body: JSON.stringify({
-        requester_id: 'user-4321',
-        channel_name: 'test-channel',
-      }),
+      body: JSON.stringify({ ticket }),
       method: 'POST',
     });
     const response = await inviteAgent(request);
@@ -633,6 +678,10 @@ async function verifyInviteAgentSuccess() {
       'POST /api/invite-agent should return RUNNING state',
     );
     assert(
+      typeof body.control_ticket === 'string' && body.control_ticket.includes('.'),
+      'POST /api/invite-agent should return a signed control ticket for stop-conversation',
+    );
+    assert(
       capturedSessionConfig !== null,
       'POST /api/invite-agent should call createSession',
     );
@@ -644,7 +693,7 @@ async function verifyInviteAgentSuccess() {
 
     assert(
       sessionConfig.channel === 'test-channel',
-      'POST /api/invite-agent should pass the requested channel to createSession',
+      'POST /api/invite-agent should derive the channel from the session ticket',
     );
     assert(
       sessionConfig.agentUid === '123456',
@@ -653,7 +702,7 @@ async function verifyInviteAgentSuccess() {
     assert(
       JSON.stringify(sessionConfig.remoteUids) ===
         JSON.stringify(['user-4321']),
-      'POST /api/invite-agent should scope the session to the requesting user',
+      'POST /api/invite-agent should scope the session to the ticket\'s uid',
     );
   } finally {
     Agent.prototype.createSession = originalCreateSession;
@@ -683,6 +732,37 @@ async function verifyStopConversationValidation() {
   );
 }
 
+async function verifyStopConversationRejectsMismatchedControlTicket() {
+  const { POST: stopConversation } =
+    await import('../app/api/stop-conversation/route');
+
+  // Regression guard for the fixed vulnerability: a bare agent_id (no ticket,
+  // or a ticket minted for a *different* agent_id) must not be enough to stop
+  // a session — otherwise a guessed/observed agent_id lets anyone kill it.
+  const ticketForAnotherAgent = createTicket({ agentId: 'someone-elses-agent-id', channel: 'c' });
+  const request = new NextRequest(
+    'http://localhost:3000/api/stop-conversation',
+    {
+      body: JSON.stringify({
+        agent_id: 'mock-agent-id',
+        control_ticket: ticketForAnotherAgent,
+      }),
+      method: 'POST',
+    },
+  );
+  const response = await stopConversation(request);
+  const body = await getJson(response);
+
+  assert(
+    response.status === 401,
+    'POST /api/stop-conversation should reject a control ticket for a different agent_id',
+  );
+  assert(
+    body.error === 'Invalid or expired control ticket for this agent',
+    'POST /api/stop-conversation should explain the ticket/agent mismatch',
+  );
+}
+
 async function verifyStopConversationSuccess() {
   const { POST: stopConversation } =
     await import('../app/api/stop-conversation/route');
@@ -697,10 +777,11 @@ async function verifyStopConversationSuccess() {
   } as typeof AgoraClient.prototype.stopAgent;
 
   try {
+    const controlTicket = createTicket({ agentId: 'mock-agent-id', channel: 'test-channel' });
     const request = new NextRequest(
       'http://localhost:3000/api/stop-conversation',
       {
-        body: JSON.stringify({ agent_id: 'mock-agent-id' }),
+        body: JSON.stringify({ agent_id: 'mock-agent-id', control_ticket: controlTicket }),
         method: 'POST',
       },
     );
@@ -725,8 +806,10 @@ async function verifyStopConversationSuccess() {
 }
 
 async function main() {
-  await verifyGenerateAgoraTokenRoute();
-  await verifyGenerateAgoraTokenReplacesZeroUid();
+  await verifyGenerateAgoraTokenInitialMint();
+  await verifyGenerateAgoraTokenIgnoresQueryOverride();
+  await verifyGenerateAgoraTokenRenewsWithValidTicket();
+  await verifyGenerateAgoraTokenRejectsInvalidTicket();
   await verifyChatCompletionsMissingEnv();
   await verifyChatCompletionsInvalidJson();
   await verifyChatCompletionsSseDone();
@@ -738,6 +821,7 @@ async function main() {
   await verifyInviteAgentValidation();
   await verifyInviteAgentSuccess();
   await verifyStopConversationValidation();
+  await verifyStopConversationRejectsMismatchedControlTicket();
   await verifyStopConversationSuccess();
 
   console.log('API contract checks passed');

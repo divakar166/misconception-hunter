@@ -4,12 +4,20 @@ export interface AgoraTokenData {
   token: string;
   uid: string;
   channel: string;
+  // Signed proof of this exact (channel, uid) session — see lib/session-ticket.ts.
+  // Required on renewal and to start/stop the agent; the server never trusts
+  // a bare channel/uid/agent_id from the client without one.
+  ticket: string;
   agentId?: string;
+  // Proof of ownership of `agentId` — see AgentResponse.control_ticket.
+  controlTicket?: string;
 }
 
 export interface ClientStartRequest {
-  requester_id: string;
-  channel_name: string;
+  // The session ticket from /api/generate-agora-token. The server derives
+  // channel and requester uid from this rather than trusting client-supplied
+  // values — see lib/session-ticket.ts for why.
+  ticket: string;
   // Optional: student-supplied or LLM-suggested topic to open the session
   // on, instead of a randomly picked starter question.
   topic?: string;
@@ -21,12 +29,18 @@ export interface SuggestTopicResponse {
 
 export interface StopConversationRequest {
   agent_id: string;
+  // Proof this caller is the one who started this agent — see
+  // lib/session-ticket.ts and AgentResponse.control_ticket.
+  control_ticket: string;
 }
 
 export interface AgentResponse {
   agent_id: string;
   create_ts: number;
   state: string;
+  // Signed {agentId, channel} ticket; must be presented back to
+  // /api/stop-conversation to stop this specific agent.
+  control_ticket: string;
 }
 
 export interface AgoraRenewalTokens {
@@ -37,7 +51,7 @@ export interface AgoraRenewalTokens {
 export interface ConversationComponentProps {
   agoraData: AgoraTokenData;
   rtmClient: RTMClient;
-  onTokenWillExpire: (uid: string) => Promise<AgoraRenewalTokens>;
+  onTokenWillExpire: () => Promise<AgoraRenewalTokens>;
   onEndConversation: (transcript: SessionSummaryTurn[]) => void;
 }
 

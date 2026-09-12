@@ -10,6 +10,22 @@ import {
 } from 'agora-agents';
 import { ClientStartRequest, AgentResponse } from '@/types/conversation';
 import { DEFAULT_AGENT_UID } from '@/lib/agora';
+import { createTicket, verifyTicket } from '@/lib/session-ticket';
+
+interface AgoraSessionTicket {
+  channel: string;
+  uid: string;
+}
+
+interface AgentControlTicket {
+  agentId: string;
+  channel: string;
+}
+
+// Kept aligned with EXPIRATION_TIME_IN_SECONDS in generate-agora-token/route.ts
+// and the `expiresIn` below — a control ticket only needs to outlive the
+// agent session it authorizes.
+const CONTROL_TICKET_TTL_SECONDS = 3600;
 
 // System prompt that defines the agent's personality and behavior.
 // Swap this out to change what the agent talks about.
@@ -99,6 +115,14 @@ function pickGreeting(topic?: string): string {
 // agentUid identifies the AI in the RTC channel and shares its default with the client.
 const agentUid = String(DEFAULT_AGENT_UID);
 
+// Hard ceiling on how long a single agent session may run, in seconds.
+// Was ExpiresIn.hours(1) with no client-side cap — fine for local dev, not
+// for a publicly shared demo link, where an engaged (or forgotten) tab is a
+// real, uncapped Agora bill. Shared with the client via
+// NEXT_PUBLIC_MAX_SESSION_SECONDS so the UI can show a countdown and
+// self-end the call at the same limit the server enforces.
+const MAX_SESSION_SECONDS = Number(process.env.NEXT_PUBLIC_MAX_SESSION_SECONDS) || 600;
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -110,19 +134,25 @@ export async function POST(request: NextRequest) {
     // --- 1. Parse request ---
 
     const body: ClientStartRequest = await request.json();
-    const { requester_id, channel_name, topic } = body;
+    const { ticket, topic } = body;
 
     // Validate required env vars on first request so misconfiguration surfaces
     // with a clear error message rather than a silent failure.
     const appId = requireEnv('NEXT_PUBLIC_AGORA_APP_ID');
     const appCertificate = requireEnv('NEXT_AGORA_APP_CERTIFICATE');
 
-    if (!channel_name || !requester_id) {
+    // channel_name/requester_id come ONLY from a verified ticket, never from
+    // the request body directly — otherwise any caller could start a paid
+    // agent session in a channel they don't own (or one already in use).
+    const sessionPayload = verifyTicket<AgoraSessionTicket>(ticket);
+    if (!sessionPayload) {
       return NextResponse.json(
-        { error: 'channel_name and requester_id are required' },
-        { status: 400 },
+        { error: 'Invalid or expired session ticket' },
+        { status: 401 },
       );
     }
+    const channel_name = sessionPayload.channel;
+    const requester_id = sessionPayload.uid;
 
     // --- 2. Build and start the agent ---
 
@@ -229,16 +259,25 @@ export async function POST(request: NextRequest) {
       agentUid,
       remoteUids: [requester_id],
       idleTimeout: 30,
-      expiresIn: ExpiresIn.hours(1),
+      expiresIn: ExpiresIn.seconds(MAX_SESSION_SECONDS),
       debug: false, // enable debug to show restful API calls in the console
     });
 
     const agentId = await session.start();
 
+    // Proof this exact caller started this exact agent — required by
+    // /api/stop-conversation so a guessed/observed agent_id can't be used to
+    // stop someone else's session.
+    const controlTicket = createTicket<AgentControlTicket>(
+      { agentId, channel: channel_name },
+      CONTROL_TICKET_TTL_SECONDS,
+    );
+
     return NextResponse.json({
       agent_id: agentId,
       create_ts: Math.floor(Date.now() / 1000),
       state: 'RUNNING',
+      control_ticket: controlTicket,
     } as AgentResponse);
   } catch (error) {
     console.error('Error starting conversation:', error);

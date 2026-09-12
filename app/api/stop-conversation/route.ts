@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { AgoraClient, Area } from 'agora-agents';
 import { StopConversationRequest } from '@/types/conversation';
+import { verifyTicket } from '@/lib/session-ticket';
+
+interface AgentControlTicket {
+  agentId: string;
+  channel: string;
+}
 
 function isAgentAlreadyStoppingOrStopped(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -25,12 +31,23 @@ function isAgentAlreadyStoppingOrStopped(error: unknown): boolean {
 export async function POST(request: Request) {
   try {
     const body: StopConversationRequest = await request.json();
-    const { agent_id } = body;
+    const { agent_id, control_ticket } = body;
 
     if (!agent_id) {
       return NextResponse.json(
         { error: 'agent_id is required' },
         { status: 400 },
+      );
+    }
+
+    // Without this, a bare agent_id (guessed, logged, or observed) would let
+    // any caller stop any session — not destructive to the student's data,
+    // but a free way to kill someone else's paid call mid-conversation.
+    const controlPayload = verifyTicket<AgentControlTicket>(control_ticket);
+    if (!controlPayload || controlPayload.agentId !== agent_id) {
+      return NextResponse.json(
+        { error: 'Invalid or expired control ticket for this agent' },
+        { status: 401 },
       );
     }
 
