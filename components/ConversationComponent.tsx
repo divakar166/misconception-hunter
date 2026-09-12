@@ -453,9 +453,7 @@ export default function ConversationComponent({
     if (!onTokenWillExpire || !joinedUID) return;
     try {
       // RTC and RTM renew independently, but the quickstart fetches both in one request.
-      const { rtcToken, rtmToken } = await onTokenWillExpire(
-        joinedUID.toString(),
-      );
+      const { rtcToken, rtmToken } = await onTokenWillExpire();
       await client?.renewToken(rtcToken);
       await rtmClient.renewToken(rtmToken);
     } catch (error) {
@@ -469,16 +467,71 @@ export default function ConversationComponent({
     onEndConversation(toSessionSummaryTranscript(messageList, agentUID));
   }, [onEndConversation, messageList, agentUID]);
 
+  // Hard cap on session length, mirroring the server-side `expiresIn` set in
+  // app/api/invite-agent/route.ts (same env var, so client and server agree
+  // on the limit). Without this, a forgotten or abandoned tab keeps a paid
+  // agent session running for up to an hour with nobody watching it.
+  const maxSessionSeconds =
+    Number(process.env.NEXT_PUBLIC_MAX_SESSION_SECONDS) || 600;
+  const [secondsRemaining, setSecondsRemaining] = useState(maxSessionSeconds);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSecondsRemaining((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleEndConversation();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+    // Intentionally runs once per mount — this is a session-lifetime countdown,
+    // not something that should reset if handleEndConversation's identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Best-effort agent stop if the tab is closed/backgrounded mid-call rather
+  // than ended via the button — otherwise the agent (and its Agora billing)
+  // runs until idleTimeout/expiresIn regardless of whether anyone is still
+  // there. sendBeacon fires even as the page is unloading, unlike fetch.
+  useEffect(() => {
+    const stopOnUnload = () => {
+      if (!agoraData.agentId || !agoraData.controlTicket) return;
+      const payload = JSON.stringify({
+        agent_id: agoraData.agentId,
+        control_ticket: agoraData.controlTicket,
+      });
+      navigator.sendBeacon?.(
+        '/api/stop-conversation',
+        new Blob([payload], { type: 'application/json' }),
+      );
+    };
+    document.addEventListener('pagehide', stopOnUnload);
+    return () => document.removeEventListener('pagehide', stopOnUnload);
+  }, [agoraData.agentId, agoraData.controlTicket]);
+
   return (
     <QuickstartConversationLayout
       statusPanel={
-        <ConnectionStatusPanel
-          connectionState={connectionState}
-          connectionSeverity={connectionSeverity}
-          connectionIssues={connectionIssues}
-          isOpen={isConnectionDetailsOpen}
-          onToggle={() => setIsConnectionDetailsOpen((open) => !open)}
-        />
+        <>
+          <span
+            className="text-xs tabular-nums text-muted-foreground"
+            title="Sessions auto-end at this limit to keep the demo's Agora usage bounded"
+            aria-label={`${Math.floor(secondsRemaining / 60)} minutes ${secondsRemaining % 60} seconds remaining in this session`}
+          >
+            {String(Math.floor(secondsRemaining / 60)).padStart(2, '0')}:
+            {String(secondsRemaining % 60).padStart(2, '0')} left
+          </span>
+          <ConnectionStatusPanel
+            connectionState={connectionState}
+            connectionSeverity={connectionSeverity}
+            connectionIssues={connectionIssues}
+            isOpen={isConnectionDetailsOpen}
+            onToggle={() => setIsConnectionDetailsOpen((open) => !open)}
+          />
+        </>
       }
       pipelineMetrics={<QuickstartPipelineMetrics metrics={agentMetrics} />}
       transcriptPanel={

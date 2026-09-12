@@ -104,8 +104,7 @@ export default function LandingPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            requester_id: responseData.uid,
-            channel_name: responseData.channel,
+            ticket: responseData.ticket,
             ...(topic?.trim() && { topic: topic.trim() }),
           } as ClientStartRequest),
         })
@@ -138,7 +137,11 @@ export default function LandingPage() {
 
       // 3. All dependencies ready — store state and show conversation
       setRtmClient(rtm);
-      setAgoraData({ ...responseData, agentId: agentData?.agent_id });
+      setAgoraData({
+        ...responseData,
+        agentId: agentData?.agent_id,
+        controlTicket: agentData?.control_ticket,
+      });
       setSummary(null);
       setSummaryError(null);
       setView('in-call');
@@ -151,33 +154,36 @@ export default function LandingPage() {
   };
 
   const handleTokenWillExpire = useCallback(
-    async (uid: string): Promise<AgoraRenewalTokens> => {
+    async (): Promise<AgoraRenewalTokens> => {
       try {
-        const channel = agoraData?.channel;
-        if (!channel) {
-          throw new Error('Missing channel for token renewal');
+        const ticket = agoraData?.ticket;
+        if (!ticket) {
+          throw new Error('Missing session ticket for token renewal');
         }
 
-        // RTC and RTM tokens are renewed independently:
-        //   - RTC uses the browser client's assigned UID (passed in from ConversationComponent).
-        //   - RTM uses the same UID that was used during RTM login (agoraData.uid).
-        // Both are fetched in parallel to stay within the token-expiry grace-period window.
-        const [rtcResponse, rtmResponse] = await Promise.all([
-          fetch(`/api/generate-agora-token?channel=${channel}&uid=${uid}`),
-          fetch(`/api/generate-agora-token?channel=${channel}&uid=${agoraData.uid}`),
-        ]);
-        const [rtcData, rtmData] = await Promise.all([
-          rtcResponse.json(),
-          rtmResponse.json(),
-        ]);
+        // Renewal is authorized by the session ticket, not a client-supplied
+        // channel/uid (see lib/session-ticket.ts) — the server derives both
+        // from the ticket, so this can only ever renew *this* session.
+        //
+        // One fetch, not two: per the "One Token Rule" (docs/ai/L1/L2/token_model.md),
+        // a single buildTokenWithRtm token already carries both RTC and RTM
+        // privilege for the same uid — this app always uses the same uid for
+        // both (see components/ConversationComponent.tsx's useJoin call), so
+        // there's nothing a second, near-identical fetch would add.
+        const response = await fetch(`/api/generate-agora-token?ticket=${encodeURIComponent(ticket)}`);
+        const data = await response.json();
 
-        if (!rtcResponse.ok || !rtmResponse.ok) {
-          throw new Error('Failed to generate renewal tokens');
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to generate renewal token');
         }
+
+        // Roll the ticket forward so a session that renews more than once
+        // keeps a fresh, non-expired ticket to renew with next time.
+        setAgoraData((prev) => (prev ? { ...prev, ticket: data.ticket } : prev));
 
         return {
-          rtcToken: rtcData.token,
-          rtmToken: rtmData.token,
+          rtcToken: data.token,
+          rtmToken: data.token,
         };
       } catch (error) {
         console.error('Error renewing token:', error);
@@ -195,7 +201,10 @@ export default function LandingPage() {
         const response = await fetch('/api/stop-conversation', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent_id: agoraData.agentId }),
+          body: JSON.stringify({
+            agent_id: agoraData.agentId,
+            control_ticket: agoraData.controlTicket,
+          }),
         });
         if (!response.ok) {
           console.error('Failed to stop agent:', await response.text());
