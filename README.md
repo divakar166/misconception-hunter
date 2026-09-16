@@ -113,8 +113,8 @@ This is rendered as a Session Summary card (`components/SessionSummaryCard.tsx`)
 ## Known Technical Limitations
 
 - The summary/escalation step depends on a second, self-hosted LLM call (Groq) separate from Agora's managed conversational LLM — if that call fails, the conversation itself is unaffected, but no summary is produced for that session.
-- No persistence: summaries live only in browser memory for that session; refreshing the page loses them. There is intentionally no database in this prototype.
-- Escalation is a visible flag on the summary card, not a wired notification/ticketing integration to an actual teacher inbox.
+- Persistence (`lib/db.ts`, Supabase) is optional and best-effort: it only activates when `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` are set, and even then only backs the single `/s/[id]` permalink lookup — there's no "my sessions" history, auth, or cross-session view yet.
+- Escalation is a visible flag on the summary card and permalink page, not a wired notification/ticketing integration to an actual teacher inbox.
 - Single-user sessions only — no classroom-level aggregation or multi-student view.
 - Misconception detection is fundamentally LLM judgment, not a verified content-specific pedagogical model; false positives/negatives are possible, which is why the system is intentionally conservative about declaring a misconception.
 - Rate limiting (`lib/rate-limit.ts`) is optional infrastructure: it only activates when `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` are set, so a deployment without them relies on the session-ticket model and the duration cap alone.
@@ -123,7 +123,7 @@ This is rendered as a Session Summary card (`components/SessionSummaryCard.tsx`)
 
 - Wire the escalation flag to a real notification (email/Slack) instead of just the summary card.
 - Expand the curated concept set, or let it be configured per classroom/teacher.
-- Persist summaries per student across sessions to track recurring misconceptions over time (would introduce a database — explicitly deferred for this prototype).
+- Add auth and a "my sessions" view so a student's persisted sessions are tied to them, not just individually shareable by link, and recurring misconceptions can be tracked across sessions.
 - Revisit per-turn structured state tracking (an earlier iteration of this project prototyped exactly that, routing the live conversation through a custom LLM endpoint) if a more production-ready deployment removes the public-tunnel constraint that made it unsuitable for a live demo.
 
 ## Run It
@@ -145,6 +145,7 @@ pnpm dev
 | `NEXT_PUBLIC_MAX_SESSION_SECONDS` |  ➖  | Hard cap, in seconds, on a single agent session (server `expiresIn` + client auto-end countdown). Defaults to `600` (10 min). Keep this low on a public deployment — it's the main lever on Agora spend per visitor. |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | ➖ | [Upstash Redis](https://upstash.com) (free tier) REST credentials backing rate limiting (`lib/rate-limit.ts`). Without both set, rate limiting is a no-op. |
 | `DAILY_AGENT_SESSION_BUDGET` |    ➖    | Global daily cap on agent sessions started across all callers. Defaults to `20`. Only enforced when Upstash is configured. |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | ➖ | [Supabase](https://supabase.com) (free tier) credentials backing session persistence for the `/s/[id]` shareable report permalink (`lib/db.ts`, `supabase/schema.sql`). Without both set, sessions aren't persisted — the summary still shows normally, there's just no share link. Use the `service_role` key, not `anon`. |
 
 The live conversation itself needs only the two Agora credentials — `NEXT_LLM_URL`/`NEXT_LLM_API_KEY` are only used by the post-call summary endpoint.
 
@@ -155,6 +156,10 @@ The live conversation itself needs only the two Agora credentials — `NEXT_LLM_
 ### Rate limiting
 
 `/api/invite-agent` (3 starts / 10 min per IP, plus a shared `DAILY_AGENT_SESSION_BUDGET`), `/api/session-summary`, and `/api/suggest-topic` (30 requests / hour per IP each) are all rate-limited via Upstash Redis (`lib/rate-limit.ts`) once `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` are set. The daily budget is checked immediately before the agent actually starts (not earlier), so it's only consumed by real session attempts, not by requests that fail ticket validation.
+
+### Session persistence and the `/s/[id]` permalink
+
+At the end of a session, once the summary is generated and already shown to the student, the client makes a best-effort call to `/api/sessions` to persist the transcript and report to Supabase (`lib/db.ts`). If that succeeds, the summary card shows a "Copy shareable link" control pointing at `/s/<id>` — a server-rendered page (`app/s/[id]/page.tsx`) that re-renders the same report plus the full transcript, with Open Graph tags for a clean link preview. The `<id>` is a random 12-character string (`lib/db.ts`'s `generateSessionId`), not sequential, so permalinks can't be enumerated. Persistence failing (or not being configured) never blocks or invalidates the summary itself — it just means no share link for that session. See `supabase/schema.sql` for the table this expects.
 
 ### Commands
 
@@ -173,13 +178,17 @@ pnpm run verify          # doctor + lint + typecheck + verify:api + build
 - `app/api/invite-agent/route.ts` — starts the agent, Socratic system prompt, VAD tuning, randomized greeting
 - `app/api/stop-conversation/route.ts` — stops the agent session
 - `app/api/session-summary/route.ts` — the external action: structured post-call report + escalation flag
+- `app/api/sessions/route.ts` — best-effort persistence of a finished session for the `/s/[id]` permalink
+- `app/s/[id]/page.tsx` — server-rendered shareable report permalink, with Open Graph tags
 - `app/api/chat/completions/route.ts` — an OpenAI-compatible SSE proxy scaffold, currently unused by the live path (kept as an extension point; see "Future Evolution")
 - `components/LandingPage.tsx` — pre-call / in-call / summary view state, session lifecycle
 - `components/ConversationComponent.tsx` — RTC client, transcript state, `AGENT_METRICS`
-- `components/SessionSummaryCard.tsx` — renders the structured end-of-session report
+- `components/SessionSummaryCard.tsx` — post-call summary card (loading/error/share state) around `ReportBody`
+- `components/ReportBody.tsx` — pure report rendering, shared between the post-call card and the permalink page
 - `lib/conversation.ts` — transcript normalization, visualizer state mapping, transcript→summary-request mapping
 - `lib/session-ticket.ts` — signed session tickets scoping token renewal and agent start/stop
 - `lib/rate-limit.ts` — per-IP and daily-budget request limiting (Upstash Redis, optional)
+- `lib/db.ts` — session persistence backing the `/s/[id]` permalink (Supabase, optional)
 - `types/conversation.ts` — shared request/response contracts
 
 ## Troubleshooting
