@@ -67,6 +67,21 @@ export interface SessionSummaryRequest {
   transcript: SessionSummaryTurn[];
 }
 
+// Request to persist a finished session for a /s/[id] shareable permalink.
+// Sent after the summary is already generated and shown — persistence is
+// best-effort, so failure here never blocks or invalidates the summary the
+// student already sees.
+export interface PersistSessionRequest {
+  transcript: SessionSummaryTurn[];
+  summary: SessionSummaryResponse;
+}
+
+export interface PersistSessionResponse {
+  // null when persistence isn't configured or the write failed — the caller
+  // should just not offer a share link, not treat it as an error.
+  id: string | null;
+}
+
 export interface MisconceptionFinding {
   description: string;
   confidence: number; // 0-1
