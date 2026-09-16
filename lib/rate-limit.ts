@@ -17,7 +17,19 @@ function getRedis(): Redis | null {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) return null;
-  return new Redis({ url, token });
+  try {
+    return new Redis({ url, token });
+  } catch (error) {
+    // The Redis client validates the URL eagerly in its constructor, and
+    // this module is instantiated at import time — including during Next.js's
+    // build-time page-data collection, not just at request time. A malformed
+    // credential (e.g. a stray quote character from a pasted .env value)
+    // must not be able to break the production build or take the whole app
+    // down; degrade to "rate limiting disabled," the same as unset
+    // credentials, and let it be visible in logs instead.
+    console.error('[rate-limit] Invalid Upstash Redis configuration, rate limiting disabled:', error);
+    return null;
+  }
 }
 
 const redis = getRedis();
