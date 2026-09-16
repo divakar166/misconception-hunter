@@ -74,6 +74,10 @@ export default function LandingPage() {
   const [summary, setSummary] = useState<SessionSummaryResponse | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  // Populated (best-effort) once the finished session is persisted — see
+  // /api/sessions. Stays null if persistence isn't configured or fails;
+  // that's not an error state, the summary above is unaffected either way.
+  const [shareId, setShareId] = useState<string | null>(null);
   const [rtmClient, setRtmClient] = useState<RTMClient | null>(null);
   const [agentJoinError, setAgentJoinError] = useState(false);
 
@@ -229,6 +233,7 @@ export default function LandingPage() {
 
     setIsSummaryLoading(true);
     setSummaryError(null);
+    setShareId(null);
     try {
       const response = await fetch('/api/session-summary', {
         method: 'POST',
@@ -240,6 +245,17 @@ export default function LandingPage() {
       }
       const data = (await response.json()) as SessionSummaryResponse;
       setSummary(data);
+
+      // Best-effort persistence for the shareable /s/[id] permalink — never
+      // blocks or fails the summary the student already sees above.
+      fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript, summary: data }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => setShareId(body?.id ?? null))
+        .catch((err) => console.error('Error persisting session:', err));
     } catch (err) {
       console.error('Error generating session summary:', err);
       setSummaryError('Could not generate a summary for this session.');
@@ -252,6 +268,7 @@ export default function LandingPage() {
     setAgoraData(null);
     setSummary(null);
     setSummaryError(null);
+    setShareId(null);
     setView('pre-call');
   };
 
@@ -285,6 +302,7 @@ export default function LandingPage() {
               isLoading={isSummaryLoading}
               error={summaryError}
               summary={summary}
+              shareId={shareId}
               onStartNewSession={handleStartNewSession}
             />
           )}
