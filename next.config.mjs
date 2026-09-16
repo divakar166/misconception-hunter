@@ -34,7 +34,12 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'",
+              // 'wasm-unsafe-eval' (not the broader 'unsafe-eval') is required —
+              // Agora's RTM SDK compiles and instantiates a WASM module for its
+              // sync/presence layer client-side. Without it, WebAssembly.instantiate
+              // is blocked by CSP, RTM login fails outright, and the conversation
+              // never starts — caught live on the deployed site (see git history).
+              "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "font-src 'self' data:",
