@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, Suspense, useEffect, useCallback } from 'react';
+import { useState, Suspense, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import type { RTMClient } from 'agora-rtm';
@@ -22,40 +22,10 @@ const ConversationComponent = dynamic(() => import('./ConversationComponent'), {
   ssr: false,
 });
 
-// Dynamically import AgoraRTCProvider (browser-only).
-// The AgoraVoiceAI toolkit is initialized inside ConversationComponent after
-// the RTC join succeeds, so this wrapper only needs to provide the RTC client.
-const AgoraProvider = dynamic(
-  async () => {
-    const { AgoraRTCProvider, default: AgoraRTC } =
-      await import('agora-rtc-react');
-    return {
-      default: function AgoraProviders({
-        children,
-      }: {
-        children: React.ReactNode;
-      }) {
-        // useRef persists across StrictMode's simulated unmount/remount, so only
-        // one RTC client is ever created per session (useMemo creates two in StrictMode).
-        const clientRef = useRef<ReturnType<
-          typeof AgoraRTC.createClient
-        > | null>(null);
-        if (!clientRef.current) {
-          clientRef.current = AgoraRTC.createClient({
-            mode: 'rtc',
-            codec: 'vp8',
-          });
-        }
-        return (
-          <AgoraRTCProvider client={clientRef.current}>
-            {children}
-          </AgoraRTCProvider>
-        );
-      },
-    };
-  },
-  { ssr: false },
-);
+// Browser-only RTC provider — see components/AgoraProvider.tsx for why this
+// is a real module with a static import specifier rather than a component
+// built inline inside the dynamic() factory.
+const AgoraProvider = dynamic(() => import('./AgoraProvider'), { ssr: false });
 
 type View = 'pre-call' | 'in-call' | 'summary';
 

@@ -2,6 +2,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
+const isDev = process.env.NODE_ENV !== 'production';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -34,12 +35,21 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              // 'wasm-unsafe-eval' (not the broader 'unsafe-eval') is required —
-              // Agora's RTM SDK compiles and instantiates a WASM module for its
-              // sync/presence layer client-side. Without it, WebAssembly.instantiate
-              // is blocked by CSP, RTM login fails outright, and the conversation
-              // never starts — caught live on the deployed site (see git history).
-              "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+              // 'wasm-unsafe-eval' (not the broader 'unsafe-eval') is required in
+              // every environment — Agora's RTM SDK compiles and instantiates a
+              // WASM module for its sync/presence layer client-side. Without it,
+              // WebAssembly.instantiate is blocked by CSP and RTM login fails
+              // outright — caught live on the deployed site (see git history).
+              //
+              // 'unsafe-eval' itself is added ONLY in development: Next.js's Fast
+              // Refresh runtime uses eval() for hot module reloading, which this
+              // CSP otherwise blocks too — breaking `pnpm dev` entirely, not just
+              // hot reload (the whole entry bundle throws at evaluation time,
+              // so nothing ever mounts). The production build doesn't need or
+              // get this — headers are a runtime response, not baked into the
+              // build, so this had to be caught by testing in an actual browser,
+              // not by `pnpm run verify`.
+              `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ''}`,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "font-src 'self' data:",

@@ -21,8 +21,10 @@ import {
   type UserTranscription,
   type AgentTranscription,
 } from 'agora-agent-client-toolkit';
-import { AgentVisualizer } from 'agora-agent-uikit';
-import { MicButtonWithVisualizer } from 'agora-agent-uikit/rtc';
+import {
+  ConversationVisualizer,
+  MicToggleButton,
+} from './ConversationVisualizer';
 import { DEFAULT_AGENT_UID } from '@/lib/agora';
 import {
   getCurrentInProgressMessage,
@@ -43,6 +45,7 @@ import {
   QuickstartPipelineMetrics,
   type QuickstartAgentMetric,
 } from './QuickstartPipelineMetrics';
+
 import { QuickstartTranscriptPanel } from './QuickstartTranscriptPanel';
 import type { ConversationComponentProps } from '@/types/conversation';
 
@@ -547,7 +550,7 @@ export default function ConversationComponent({
           role="region"
           aria-label="AI agent status visualization"
         >
-          <AgentVisualizer state={visualizerState} size="lg" />
+          <ConversationVisualizer state={visualizerState} />
           {remoteUsers.map((user) => (
             <div key={user.uid} className="hidden">
               <RemoteUser user={user} />
@@ -562,15 +565,10 @@ export default function ConversationComponent({
           aria-label="Audio controls"
         >
           <div className="conversation-mic-host flex items-center justify-center">
-            <MicButtonWithVisualizer
+            <MicToggleButton
               isEnabled={isEnabled}
-              setIsEnabled={setIsEnabled}
-              track={localMicrophoneTrack}
               onToggle={handleMicToggle}
-              className="overflow-visible"
-              aria-label={isEnabled ? 'Mute microphone' : 'Unmute microphone'}
-              enabledColor="hsl(var(--primary))"
-              disabledColor="hsl(var(--destructive))"
+              track={localMicrophoneTrack}
             />
           </div>
           <MicrophoneSelector localMicrophoneTrack={localMicrophoneTrack} />

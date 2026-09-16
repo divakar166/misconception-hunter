@@ -27,7 +27,16 @@ export class ErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('ErrorBoundary caught an error:', error, errorInfo);
+    // Log the component stack as a string, not as an object: in a production
+    // build the error message itself is a minified React code with no context,
+    // and an object-valued second argument is easy to miss in a log pipeline.
+    // The component stack is what actually identifies where the failure was.
+    console.error(
+      'ErrorBoundary caught an error:',
+      error,
+      '\ncomponentStack:',
+      errorInfo?.componentStack ?? '(none)',
+    );
   }
 
   render() {
