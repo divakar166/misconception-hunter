@@ -11,6 +11,7 @@ import {
 import { ClientStartRequest, AgentResponse } from '@/types/conversation';
 import { DEFAULT_AGENT_UID } from '@/lib/agora';
 import { createTicket, verifyTicket } from '@/lib/session-ticket';
+import { checkDailyAgentBudget, getClientIp, inviteAgentLimiter } from '@/lib/rate-limit';
 
 interface AgoraSessionTicket {
   channel: string;
@@ -131,7 +132,20 @@ function requireEnv(name: string): string {
 
 export async function POST(request: NextRequest) {
   try {
-    // --- 1. Parse request ---
+    // --- 1. Rate limits — checked before doing any other work, since this
+    // route is the one that actually spends money (Agora agent-minutes). ---
+
+    if (inviteAgentLimiter) {
+      const { success } = await inviteAgentLimiter.limit(getClientIp(request));
+      if (!success) {
+        return NextResponse.json(
+          { error: 'Too many session starts from this address — please wait a few minutes and try again.' },
+          { status: 429 },
+        );
+      }
+    }
+
+    // --- 2. Parse request ---
 
     const body: ClientStartRequest = await request.json();
     const { ticket, topic } = body;
@@ -252,6 +266,18 @@ export async function POST(request: NextRequest) {
         //   sampleRate: 24000,
         // }),
       );
+
+    // Global daily cap on actual agent starts — checked here (right before
+    // actually starting a paid session), not earlier, so it isn't consumed
+    // by requests that never had a valid ticket in the first place.
+    const budget = await checkDailyAgentBudget();
+    if (!budget.ok) {
+      console.warn(`[invite-agent] Daily agent-session budget hit: ${budget.used}/${budget.limit}`);
+      return NextResponse.json(
+        { error: 'This demo has reached its session limit for today — please check back tomorrow.' },
+        { status: 429 },
+      );
+    }
 
     // remoteUids restricts the agent to only process audio from this user
     const session = agent.createSession({

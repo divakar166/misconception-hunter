@@ -538,7 +538,9 @@ async function verifySuggestTopicMissingEnv() {
   });
 
   try {
-    const response = await handler();
+    const response = await handler(
+      new NextRequest('http://localhost:3000/api/suggest-topic', { method: 'POST' }),
+    );
     const body = await getJson(response);
 
     assert(
@@ -588,7 +590,9 @@ async function verifySuggestTopicSuccess() {
   });
 
   try {
-    const response = await handler();
+    const response = await handler(
+      new NextRequest('http://localhost:3000/api/suggest-topic', { method: 'POST' }),
+    );
     const body = await getJson(response);
 
     assert(

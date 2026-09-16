@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { generateText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import type { SuggestTopicResponse } from '@/types/conversation';
+import { getClientIp, llmRouteLimiter } from '@/lib/rate-limit';
 
 type SuggestTopicDeps = {
   createOpenAIClient: typeof createOpenAI;
@@ -19,7 +20,17 @@ export function createSuggestTopicHandler({
   createOpenAIClient,
   generateTextImpl,
 }: SuggestTopicDeps) {
-  return async function POST() {
+  return async function POST(request: NextRequest) {
+    if (llmRouteLimiter) {
+      const { success } = await llmRouteLimiter.limit(getClientIp(request));
+      if (!success) {
+        return NextResponse.json(
+          { error: 'Too many requests from this address — please wait a bit and try again.' },
+          { status: 429 },
+        );
+      }
+    }
+
     const apiKey = process.env.NEXT_LLM_API_KEY;
     const llmUrl = process.env.NEXT_LLM_URL;
     const modelId = 'openai/gpt-oss-120b';

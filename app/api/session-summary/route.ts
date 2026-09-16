@@ -6,6 +6,7 @@ import type {
   SessionSummaryResponse,
   SessionSummaryTurn,
 } from '@/types/conversation';
+import { getClientIp, llmRouteLimiter } from '@/lib/rate-limit';
 
 type SessionSummaryDeps = {
   createOpenAIClient: typeof createOpenAI;
@@ -105,6 +106,16 @@ export function createSessionSummaryHandler({
   generateObjectImpl,
 }: SessionSummaryDeps) {
   return async function POST(request: NextRequest) {
+    if (llmRouteLimiter) {
+      const { success } = await llmRouteLimiter.limit(getClientIp(request));
+      if (!success) {
+        return NextResponse.json(
+          { error: 'Too many requests from this address — please wait a bit and try again.' },
+          { status: 429 },
+        );
+      }
+    }
+
     const apiKey = process.env.NEXT_LLM_API_KEY;
     const llmUrl = process.env.NEXT_LLM_URL;
     // Change this to switch models without other config changes.
