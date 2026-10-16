@@ -38,6 +38,10 @@ function getClient(): SupabaseClient | null {
 
 const supabase = getClient();
 
+export function getDb(): SupabaseClient | null {
+  return supabase;
+}
+
 /**
  * Short, random, URL-safe id for a session permalink (/s/<id>). Not
  * sequential and not derived from anything guessable, so permalinks can't
@@ -56,6 +60,7 @@ function generateSessionId(): string {
 export async function persistSession(
   transcript: SessionSummaryTurn[],
   summary: SessionSummaryResponse,
+  userId: string | null = null,
 ): Promise<string | null> {
   if (!supabase) return null;
 
@@ -63,6 +68,7 @@ export async function persistSession(
   const { error } = await supabase.from('sessions').insert({
     id,
     topic: summary.topic || null,
+    user_id: userId,
     transcript,
     summary,
   });
@@ -94,4 +100,58 @@ export async function getSession(id: string): Promise<PersistedSession | null> {
   }
 
   return data as PersistedSession | null;
+}
+
+export interface SessionListItem {
+  id: string;
+  created_at: string;
+  topic: string | null;
+  overallAssessment: SessionSummaryResponse['overallAssessment'] | null;
+  misconceptionCount: number;
+}
+
+/** A signed-in user's own sessions, newest first. */
+export async function listSessionsForUser(userId: string): Promise<SessionListItem[]> {
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('sessions')
+    .select('id, created_at, topic, summary')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (error) {
+    console.error('[db] Failed to list sessions:', error);
+    return [];
+  }
+
+  return (data ?? []).map((row) => {
+    const summary = row.summary as SessionSummaryResponse | null;
+    return {
+      id: row.id,
+      created_at: row.created_at,
+      topic: row.topic,
+      overallAssessment: summary?.overallAssessment ?? null,
+      misconceptionCount: summary?.misconceptions?.length ?? 0,
+    };
+  });
+}
+
+/** Deletes a session only if it belongs to `userId`. Returns whether a row was removed. */
+export async function deleteSessionForUser(id: string, userId: string): Promise<boolean> {
+  if (!supabase) return false;
+
+  const { data, error } = await supabase
+    .from('sessions')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('id');
+
+  if (error) {
+    console.error('[db] Failed to delete session:', error);
+    return false;
+  }
+  return (data?.length ?? 0) > 0;
 }

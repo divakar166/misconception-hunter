@@ -11,11 +11,13 @@ import {
 import { ClientStartRequest, AgentResponse } from '@/types/conversation';
 import { DEFAULT_AGENT_UID } from '@/lib/agora';
 import { createTicket, verifyTicket } from '@/lib/session-ticket';
+import { buildMemoryPrompt } from '@/lib/memory';
 import { checkDailyAgentBudget, getClientIp, inviteAgentLimiter } from '@/lib/rate-limit';
 
 interface AgoraSessionTicket {
   channel: string;
   uid: string;
+  userId?: string;
 }
 
 interface AgentControlTicket {
@@ -174,6 +176,12 @@ export async function POST(request: NextRequest) {
     // fresh random starter so repeat demos don't open on the same question.
     const greeting = pickGreeting(topic);
 
+    // Signed-in students get their earlier-session notes appended to the
+    // prompt; guests (or any lookup failure) get the unchanged base prompt.
+    const memoryPrompt = sessionPayload.userId
+      ? await buildMemoryPrompt(sessionPayload.userId)
+      : '';
+
     // AgoraClient authenticates API calls to the Agora Conversational AI service.
     // area: change to Area.EU or Area.AP for European or Asia-Pacific deployments.
     const client = new AgoraClient({
@@ -186,7 +194,7 @@ export async function POST(request: NextRequest) {
     // Omit vendor API keys for supported models — AgentKit infers reseller presets on start (see Agora Console / billing).
     const agent = new Agent({
       client,
-      instructions: MISCONCEPTION_HUNTER_PROMPT,
+      instructions: MISCONCEPTION_HUNTER_PROMPT + memoryPrompt,
       greeting,
       failureMessage: 'Please wait a moment.',
       maxHistory: 50,

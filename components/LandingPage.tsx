@@ -16,6 +16,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { LoadingSkeleton } from './LoadingSkeleton';
 import { QuickstartPreCallCard } from './QuickstartPreCallCard';
 import { SessionSummaryCard } from './SessionSummaryCard';
+import { AuthNav } from './account/AuthNav';
 
 // Dynamically import the ConversationComponent with ssr disabled
 const ConversationComponent = dynamic(() => import('./ConversationComponent'), {
@@ -244,6 +245,8 @@ export default function LandingPage() {
 
   return (
     <div className="relative flex h-dvh min-h-screen flex-col overflow-hidden bg-background text-foreground">
+      {view !== 'in-call' && <AuthNav />}
+
       {/* Hero shell: pre-call CTA, live conversation, or the post-call summary. */}
       <div
         className={`flex min-h-0 flex-1 flex-col ${
@@ -256,7 +259,10 @@ export default function LandingPage() {
           className={`z-10 flex min-h-0 flex-1 flex-col ${
             view === 'in-call'
               ? 'h-full w-full max-w-none items-stretch gap-0 px-0 text-left'
-              : 'w-full max-w-none items-center justify-start px-4 text-center'
+              : `w-full max-w-none items-center px-4 text-center ${
+                  // "safe" keeps tall content scrollable instead of clipped at the top.
+                  view === 'pre-call' ? '[justify-content:safe_center]' : 'justify-start'
+                }`
           }`}
         >
           {view === 'pre-call' && (

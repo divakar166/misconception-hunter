@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { PersistSessionRequest, PersistSessionResponse } from '@/types/conversation';
-import { persistSession } from '@/lib/db';
+import { deleteSessionForUser, persistSession } from '@/lib/db';
+import { recordSessionMemory } from '@/lib/memory';
+import { getCurrentUser } from '@/lib/supabase/server';
 import { getClientIp, llmRouteLimiter } from '@/lib/rate-limit';
 
 // Persists a finished session (transcript + report) so it can be shared via
@@ -30,6 +32,19 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const id = await persistSession(body.transcript, body.summary);
+  const user = await getCurrentUser();
+  const id = await persistSession(body.transcript, body.summary, user?.id ?? null);
+  if (user && id) await recordSessionMemory(user.id, id, body.summary);
   return NextResponse.json({ id } satisfies PersistSessionResponse);
+}
+
+export async function DELETE(request: NextRequest) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+  const id = new URL(request.url).searchParams.get('id');
+  if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
+
+  const deleted = await deleteSessionForUser(id, user.id);
+  return NextResponse.json({ deleted }, { status: deleted ? 200 : 404 });
 }

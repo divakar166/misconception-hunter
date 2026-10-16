@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { RtcTokenBuilder, RtcRole } from 'agora-token';
 import { createTicket, verifyTicket } from '@/lib/session-ticket';
+import { getCurrentUser } from '@/lib/supabase/server';
 
 const EXPIRATION_TIME_IN_SECONDS = 3600;
 
 interface AgoraSessionTicket {
   channel: string;
   uid: string;
+  // Verified Supabase user id for signed-in students, absent for guests.
+  userId?: string;
 }
 
 function generateChannelName(): string {
@@ -44,6 +47,7 @@ export async function GET(request: NextRequest) {
   //      the exact session the caller was already handed.
   let channelName: string;
   let uid: number;
+  let userId: string | undefined;
 
   if (incomingTicket) {
     const payload = verifyTicket<AgoraSessionTicket>(incomingTicket);
@@ -55,9 +59,12 @@ export async function GET(request: NextRequest) {
     }
     channelName = payload.channel;
     uid = Number(payload.uid);
+    userId = payload.userId;
   } else {
     channelName = generateChannelName();
     uid = generateUid();
+    // Taken from the verified auth cookie, never from the request.
+    userId = (await getCurrentUser())?.id;
   }
 
   const expirationTime =
@@ -78,7 +85,7 @@ export async function GET(request: NextRequest) {
     // (renew -> get new ticket -> renew again) can continue indefinitely
     // without ever falling back to trusting client-supplied channel/uid.
     const ticket = createTicket<AgoraSessionTicket>(
-      { channel: channelName, uid: uid.toString() },
+      { channel: channelName, uid: uid.toString(), ...(userId && { userId }) },
       EXPIRATION_TIME_IN_SECONDS,
     );
 
